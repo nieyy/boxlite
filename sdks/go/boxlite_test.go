@@ -473,3 +473,55 @@ func TestBuildCOptions_RejectsAllowNetWithDisabledMode(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// ============================================================================
+// Security preset validation
+// ============================================================================
+
+// TestPresetDefaults_KnownPresets verifies that each documented preset name
+// expands to a non-zero SecurityOptions without error.
+func TestPresetDefaults_KnownPresets(t *testing.T) {
+	known := []string{"development", "standard", "maximum"}
+	for _, name := range known {
+		opts, err := presetDefaults(name)
+		if err != nil {
+			t.Errorf("presetDefaults(%q) returned unexpected error: %v", name, err)
+		}
+		if opts.JailerEnabled == nil {
+			t.Errorf("presetDefaults(%q): JailerEnabled is nil", name)
+		}
+	}
+}
+
+// TestPresetDefaults_UnknownPreset verifies that a typo like "maximun" returns
+// an error instead of silently falling back to standard isolation.
+func TestPresetDefaults_UnknownPreset(t *testing.T) {
+	_, err := presetDefaults("maximun")
+	if err == nil {
+		t.Fatal("presetDefaults(\"maximun\"): expected error for unknown preset, got nil")
+	}
+}
+
+// TestExpandSecurityPreset_UnknownPreset exercises the same path via the
+// higher-level expandSecurityPreset so the error reaches buildCOptions callers.
+func TestExpandSecurityPreset_UnknownPreset(t *testing.T) {
+	typo := "maximun"
+	sec := &SecurityOptions{Preset: &typo}
+	_, err := expandSecurityPreset(sec)
+	if err == nil {
+		t.Fatal("expandSecurityPreset with unknown preset: expected error, got nil")
+	}
+}
+
+// TestExpandSecurityPreset_NilAndNilPreset confirms the nil-safe early returns.
+func TestExpandSecurityPreset_NilAndNilPreset(t *testing.T) {
+	got, err := expandSecurityPreset(nil)
+	if err != nil || got != nil {
+		t.Errorf("expandSecurityPreset(nil): want (nil, nil), got (%v, %v)", got, err)
+	}
+	sec := &SecurityOptions{}
+	got, err = expandSecurityPreset(sec)
+	if err != nil || got != sec {
+		t.Errorf("expandSecurityPreset(no preset): want (same ptr, nil), got (%v, %v)", got, err)
+	}
+}

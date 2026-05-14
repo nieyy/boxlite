@@ -8,7 +8,7 @@
 
 mod common;
 
-use boxlite::runtime::advanced_options::{AdvancedBoxOptions, SecurityOptions};
+use boxlite::runtime::advanced_options::SecurityOptions;
 use boxlite::runtime::options::BoxOptions;
 use common::box_test::BoxTestBase;
 use std::path::PathBuf;
@@ -84,35 +84,24 @@ impl JailerHome {
 }
 
 fn jailer_enabled_options() -> BoxOptions {
-    BoxOptions {
-        advanced: AdvancedBoxOptions {
-            security: SecurityOptions {
-                jailer_enabled: true,
-                ..SecurityOptions::default()
-            },
-            ..Default::default()
-        },
-        ..common::alpine_opts()
-    }
+    common::alpine_opts().with_security(SecurityOptions {
+        jailer_enabled: true,
+        ..SecurityOptions::default()
+    })
 }
 
 fn jailer_disabled_options() -> BoxOptions {
-    BoxOptions {
-        advanced: AdvancedBoxOptions {
-            security: SecurityOptions {
-                jailer_enabled: false,
-                ..SecurityOptions::default()
-            },
-            ..Default::default()
-        },
-        ..common::alpine_opts()
-    }
+    common::alpine_opts().with_security(SecurityOptions {
+        jailer_enabled: false,
+        ..SecurityOptions::default()
+    })
 }
 
 #[cfg(target_os = "macos")]
-fn with_sandbox_profile(mut options: BoxOptions, profile_path: std::path::PathBuf) -> BoxOptions {
-    options.advanced.security.sandbox_profile = Some(profile_path);
-    options
+fn with_sandbox_profile(options: BoxOptions, profile_path: std::path::PathBuf) -> BoxOptions {
+    let mut security = options.advanced.security().clone();
+    security.sandbox_profile = Some(profile_path);
+    options.with_security(security)
 }
 
 #[cfg(target_os = "macos")]

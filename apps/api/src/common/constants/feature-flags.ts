@@ -7,4 +7,5 @@
 export const FeatureFlags = {
   ORGANIZATION_INFRASTRUCTURE: 'organization_infrastructure',
   SANDBOX_RESIZE: 'sandbox_resize',
+  SECURITY_OPTIONS: 'security_options',
 } as const
