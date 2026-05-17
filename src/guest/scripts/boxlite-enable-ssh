@@ -16,9 +16,24 @@ HOST_KEY="/etc/ssh/boxlite_ssh_host_ed25519_key"
 SSHD_CONFIG="/etc/ssh/sshd_config_boxlite"
 PID_FILE="/tmp/boxlite-sshd.pid"
 
-# OpenSSH privilege separation requires /var/empty
+# OpenSSH privilege separation requires /var/empty and a dedicated 'sshd'
+# system user. Minimal container images (e.g. Ubuntu) omit the sshd user;
+# create it here when absent using the same UID-scan pattern as unix_user
+# below so we never collide with an existing image account.
 mkdir -p /var/empty
 chmod 755 /var/empty
+if ! grep -q "^sshd:" /etc/passwd 2>/dev/null; then
+    _sshd_uid=22
+    while grep -q "^[^:]*:[^:]*:${_sshd_uid}:" /etc/passwd 2>/dev/null || \
+          grep -q "^[^:]*:[^:]*:${_sshd_uid}:" /etc/group 2>/dev/null; do
+        _sshd_uid=$((_sshd_uid + 1))
+    done
+    mkdir -p /var/empty/sshd
+    chmod 711 /var/empty/sshd
+    printf 'sshd:x:%d:%d:sshd privsep:/var/empty/sshd:/sbin/nologin\n' \
+        "$_sshd_uid" "$_sshd_uid" >> /etc/passwd
+    printf 'sshd:x:%d:\n' "$_sshd_uid" >> /etc/group
+fi
 
 # Add unix user to /etc/passwd if absent.
 # Scan from UID 1000 upward to find a UID not already in /etc/passwd or
