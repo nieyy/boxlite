@@ -11,6 +11,13 @@ export default {
   transform: {
     '^.+\\.[tj]s$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.spec.json' }],
   },
+  transformIgnorePatterns: ['node_modules/(?!(uuid|nanoid)/)'],
+  moduleNameMapper: {
+    '@boxlite-ai/runner-api-client': '<rootDir>/../libs/runner-api-client/src/index.ts',
+    '@boxlite-ai/api-client': '<rootDir>/../libs/api-client/src/index.ts',
+    '@boxlite-ai/toolbox-api-client': '<rootDir>/../libs/toolbox-api-client/src/index.ts',
+    '@boxlite-ai/analytics-api-client': '<rootDir>/../libs/analytics-api-client/src/index.ts',
+  },
   moduleFileExtensions: ['ts', 'js', 'html'],
   coverageDirectory: '../../coverage/apps/boxlite',
 }

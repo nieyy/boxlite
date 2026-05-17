@@ -95,7 +95,7 @@ export class OrganizationInvitationController {
   @Audit({
     action: AuditAction.UPDATE,
     targetType: AuditTarget.ORGANIZATION_INVITATION,
-    targetIdFromRequest: (req) => req.params.invitationId,
+    targetIdFromRequest: (req) => req.params.invitationId as string,
     requestMetadata: {
       body: (req: TypedRequest<UpdateOrganizationInvitationDto>) => ({
         role: req.body?.role,
@@ -160,7 +160,7 @@ export class OrganizationInvitationController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.ORGANIZATION_INVITATION,
-    targetIdFromRequest: (req) => req.params.invitationId,
+    targetIdFromRequest: (req) => req.params.invitationId as string,
   })
   async cancel(
     @Param('organizationId') organizationId: string,

@@ -25,7 +25,25 @@ type SshAccessValidationDto struct {
 	Valid bool `json:"valid"`
 	// ID of the sandbox this SSH access is for
 	SandboxId string `json:"sandboxId"`
+	// UnixUser is the unix_user stored with the token, or nil for legacy exec-bridge tokens.
+	// Non-nil signals that this is a real-SSH-access token; the gateway uses it to enforce
+	// the permission boundary (exec bridge must not be used for such tokens).
+	UnixUser             *string `json:"unixUser,omitempty"`
 	AdditionalProperties map[string]interface{}
+}
+
+// HasUnixUser returns true when UnixUser is non-nil, indicating this is a
+// real-SSH-access token and exec-bridge fallback must be rejected.
+func (o *SshAccessValidationDto) HasUnixUser() bool {
+	return o != nil && o.UnixUser != nil
+}
+
+// GetUnixUser returns the UnixUser value or "" if nil.
+func (o *SshAccessValidationDto) GetUnixUser() string {
+	if o == nil || o.UnixUser == nil {
+		return ""
+	}
+	return *o.UnixUser
 }
 
 type _SshAccessValidationDto SshAccessValidationDto
@@ -109,6 +127,9 @@ func (o SshAccessValidationDto) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["valid"] = o.Valid
 	toSerialize["sandboxId"] = o.SandboxId
+	if o.UnixUser != nil {
+		toSerialize["unixUser"] = o.UnixUser
+	}
 
 	for key, value := range o.AdditionalProperties {
 		toSerialize[key] = value
@@ -155,6 +176,7 @@ func (o *SshAccessValidationDto) UnmarshalJSON(data []byte) (err error) {
 	if err = json.Unmarshal(data, &additionalProperties); err == nil {
 		delete(additionalProperties, "valid")
 		delete(additionalProperties, "sandboxId")
+		delete(additionalProperties, "unixUser")
 		o.AdditionalProperties = additionalProperties
 	}
 

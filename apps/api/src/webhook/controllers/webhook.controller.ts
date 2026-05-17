@@ -54,7 +54,7 @@ export class WebhookController {
   @Audit({
     action: AuditAction.SEND_WEBHOOK_MESSAGE,
     targetType: AuditTarget.ORGANIZATION,
-    targetIdFromRequest: (req) => req.params.organizationId,
+    targetIdFromRequest: (req) => req.params.organizationId as string,
     requestMetadata: {
       body: (req: TypedRequest<SendWebhookDto>) => ({
         eventType: req.body?.eventType,
@@ -148,7 +148,7 @@ export class WebhookController {
   @Audit({
     action: AuditAction.INITIALIZE_WEBHOOKS,
     targetType: AuditTarget.ORGANIZATION,
-    targetIdFromRequest: (req) => req.params.organizationId,
+    targetIdFromRequest: (req) => req.params.organizationId as string,
   })
   async initializeWebhooks(@Param('organizationId') organizationId: string): Promise<void> {
     const organization = await this.organizationService.findOne(organizationId)

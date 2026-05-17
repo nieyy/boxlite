@@ -454,6 +454,11 @@ func (m *ExecManager) Signal(id string, sig int) error {
 	if reaping {
 		return fmt.Errorf("%w: %s", ErrExecReaping, id)
 	}
+	select {
+	case <-e.Done:
+		return fmt.Errorf("%w: %s", ErrExecClosed, id)
+	default:
+	}
 	e.handleMu.Lock()
 	defer e.handleMu.Unlock()
 	if e.closed || e.execution == nil {
@@ -820,13 +825,16 @@ func (e *ManagedExec) FinishEscalation() {
 	e.Escalating = false
 }
 
-// escalationFailedMarkDoomed atomically sets ReapingKill and clears
-// Escalating so no gap exists for MarkConnected to slip through.
+// escalationFailedMarkDoomed atomically sets ReapingKill, clears Escalating,
+// and rolls back SignaledHUP/TERM so no gap exists for MarkConnected to slip
+// through and so state reflects that no signal was actually delivered.
 func (e *ManagedExec) escalationFailedMarkDoomed() {
 	e.attachMu.Lock()
 	defer e.attachMu.Unlock()
 	e.ReapingKill = true
 	e.Escalating = false
+	e.SignaledHUP = false
+	e.SignaledTERM = false
 }
 
 // MarkDisconnected releases the single-attach slot and stamps

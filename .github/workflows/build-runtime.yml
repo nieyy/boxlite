@@ -84,6 +84,44 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_CACHE_SERVICE_V2', process.env.ACTIONS_CACHE_SERVICE_V2 || '');
 
+      - name: Build static sshd (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          # Build statically-linked OpenSSH sshd + ssh-keygen using Alpine musl.
+          # The resulting binaries are pure static ELFs that work inside any
+          # Linux container image regardless of the image's libc.
+          docker run --rm \
+            -v "$(pwd)/dist:/output" \
+            alpine:3.19 sh -c '
+              set -ex
+              apk add --no-cache \
+                build-base linux-headers \
+                openssl-dev openssl-libs-static \
+                zlib-dev zlib-static
+              OPENSSH_VERSION=9.7p1
+              wget -q "https://cdn.openbsd.org/pub/OpenBSD/OpenSSH/portable/openssh-${OPENSSH_VERSION}.tar.gz"
+              tar xf "openssh-${OPENSSH_VERSION}.tar.gz"
+              cd "openssh-${OPENSSH_VERSION}"
+              ./configure \
+                --prefix=/usr \
+                --sysconfdir=/etc/ssh \
+                --without-pam \
+                --without-kerberos5 \
+                --without-gssapi \
+                LDFLAGS="-static -Wl,--no-dynamic-linker" \
+                CFLAGS="-Os"
+              make -j$(nproc) sshd ssh-keygen
+              strip sshd ssh-keygen
+              cp sshd /output/boxlite-sshd
+              cp ssh-keygen /output/boxlite-ssh-keygen
+            '
+          chmod +x dist/boxlite-sshd dist/boxlite-ssh-keygen
+          # Sanity check: verify static linking
+          file dist/boxlite-sshd | grep -q "statically linked" || \
+            { echo "ERROR: boxlite-sshd is not statically linked" >&2; exit 1; }
+          echo "Built static sshd: $(file dist/boxlite-sshd)"
+
       # Build guest on host BEFORE manylinux container because:
       # - manylinux (AlmaLinux/RHEL) doesn't have musl packages in repos
       # - Building musl-cross-make from source takes ~15 minutes

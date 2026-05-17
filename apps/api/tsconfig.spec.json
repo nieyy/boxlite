@@ -4,7 +4,15 @@
     "outDir": "../../dist/out-tsc",
     "module": "commonjs",
     "moduleResolution": "node10",
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    "baseUrl": "..",
+    "paths": {
+      "@boxlite-ai/api-client": ["libs/api-client/src/index.ts"],
+      "@boxlite-ai/runner-api-client": ["libs/runner-api-client/src/index.ts"],
+      "@boxlite-ai/sdk": ["libs/sdk-typescript/src/index.ts"],
+      "@boxlite-ai/toolbox-api-client": ["libs/toolbox-api-client/src/index.ts"],
+      "@boxlite-ai/analytics-api-client": ["libs/analytics-api-client/src/index.ts"]
+    }
   },
   "include": ["jest.config.ts", "src/**/*.test.ts", "src/**/*.spec.ts", "src/**/*.d.ts"]
 }

@@ -102,12 +102,41 @@ export class SshAccessValidationDto {
   })
   sandboxId: string
 
-  static fromValidationResult(valid: boolean, sandboxId: string): SshAccessValidationDto {
+  @ApiProperty({
+    description: 'Unix user for real-SSH access; null for legacy exec-bridge tokens',
+    example: 'boxlite',
+    nullable: true,
+    required: false,
+  })
+  unixUser?: string | null
+
+  static fromValidationResult(valid: boolean, sandboxId: string, unixUser?: string | null): SshAccessValidationDto {
     const dto = new SshAccessValidationDto()
     dto.valid = valid
     dto.sandboxId = sandboxId
+    dto.unixUser = unixUser ?? null
     return dto
   }
+}
+
+// Request body for creating SSH access. Accepts both snake_case (unix_user) and
+// camelCase (unixUser) field names so callers using either naming convention work.
+// The controller resolves via: body?.unixUser ?? body?.unix_user
+export class CreateSshAccessBodyDto {
+  @ApiProperty({
+    description: 'Unix user for SSH access (camelCase form)',
+    example: 'boxlite',
+    required: false,
+  })
+  unixUser?: string
+
+  @ApiProperty({
+    description: 'Unix user for SSH access (snake_case wire form)',
+    example: 'boxlite',
+    required: false,
+  })
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  unix_user?: string
 }
 
 export class RevokeSshAccessDto {

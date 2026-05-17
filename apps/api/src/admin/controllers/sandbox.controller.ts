@@ -47,7 +47,7 @@ export class AdminSandboxController {
   @Audit({
     action: AuditAction.RECOVER,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
   })
   async recoverSandbox(@Param('sandboxId') sandboxId: string): Promise<SandboxDto> {

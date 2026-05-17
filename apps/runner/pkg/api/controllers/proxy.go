@@ -113,7 +113,7 @@ func handleWebSocketTerminal(ctx *gin.Context, r *runner.Runner, sandboxId strin
 	go runTerminalKeepalive(keepaliveCtx, ws, &writeMu, logger)
 
 	shellCmd, shellArgs := shellutil.DefaultInteractiveShell()
-	execution, err := r.Boxlite.StartExecution(ctx.Request.Context(), sandboxId, shellCmd, shellArgs, wsWriter, wsWriter, true)
+	execution, err := r.Boxlite.StartExecution(ctx.Request.Context(), sandboxId, shellCmd, shellArgs, wsWriter, wsWriter, true, nil, "", nil)
 	if err != nil {
 		logger.Warn("failed to start terminal execution", "sandbox", sandboxId, "error", err)
 		writeMu.Lock()

@@ -136,10 +136,10 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
             this.captureCreateSnapshot(props, request.body, response)
             break
           case '/api/snapshots/:snapshotId/activate':
-            this.captureActivateSnapshot(props, request.params.snapshotId)
+            this.captureActivateSnapshot(props, request.params.snapshotId as string)
             break
           case '/api/snapshots/:snapshotId/deactivate':
-            this.captureDeactivateSnapshot(props, request.params.snapshotId)
+            this.captureDeactivateSnapshot(props, request.params.snapshotId as string)
             break
           case '/api/docker-registry':
             this.captureCreateDockerRegistry(props, response)
@@ -155,7 +155,7 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
           case '/api/v1/:prefix/boxes/:boxId/start':
             this.captureStartSandbox(
               props,
-              request.params.sandboxIdOrName || request.params.workspaceId || request.params.boxId,
+              request.params.sandboxIdOrName as string || request.params.workspaceId as string || request.params.boxId as string,
             )
             break
           case '/api/sandbox/:sandboxIdOrName/stop':
@@ -163,75 +163,75 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
           case '/api/v1/:prefix/boxes/:boxId/stop':
             this.captureStopSandbox(
               props,
-              request.params.sandboxIdOrName || request.params.workspaceId || request.params.boxId,
+              request.params.sandboxIdOrName as string || request.params.workspaceId as string || request.params.boxId as string,
               request.query?.force === 'true',
             )
             break
           case '/api/sandbox/:sandboxIdOrName/resize':
-            this.captureResizeSandbox(props, request.params.sandboxIdOrName, request.body)
+            this.captureResizeSandbox(props, request.params.sandboxIdOrName as string, request.body)
             break
           case '/api/sandbox/:sandboxIdOrName/archive':
           case '/api/workspace/:workspaceId/archive':
-            this.captureArchiveSandbox(props, request.params.sandboxIdOrName || request.params.workspaceId)
+            this.captureArchiveSandbox(props, request.params.sandboxIdOrName as string || request.params.workspaceId as string)
             break
           case '/api/sandbox/:sandboxIdOrName/backup':
-            this.captureCreateBackup(props, request.params.sandboxIdOrName)
+            this.captureCreateBackup(props, request.params.sandboxIdOrName as string)
             break
           case '/api/sandbox/:sandboxIdOrName/public/:isPublic':
           case '/api/workspace/:workspaceId/public/:isPublic':
             this.captureUpdatePublicStatus(
               props,
-              request.params.sandboxIdOrName || request.params.workspaceId,
-              request.params.isPublic === 'true',
+              request.params.sandboxIdOrName as string || request.params.workspaceId as string,
+              request.params.isPublic as string === 'true',
             )
             break
           case '/api/sandbox/:sandboxIdOrName/autostop/:interval':
           case '/api/workspace/:workspaceId/autostop/:interval':
             this.captureSetAutostopInterval(
               props,
-              request.params.sandboxIdOrName || request.params.workspaceId,
-              parseInt(request.params.interval),
+              request.params.sandboxIdOrName as string || request.params.workspaceId as string,
+              parseInt(request.params.interval as string),
             )
             break
           case '/api/sandbox/:sandboxIdOrName/autoarchive/:interval':
           case '/api/workspace/:workspaceId/autoarchive/:interval':
             this.captureSetAutoArchiveInterval(
               props,
-              request.params.sandboxIdOrName || request.params.workspaceId,
-              parseInt(request.params.interval),
+              request.params.sandboxIdOrName as string || request.params.workspaceId as string,
+              parseInt(request.params.interval as string),
             )
             break
           case '/api/sandbox/:sandboxIdOrName/autodelete/:interval':
-            this.captureSetAutoDeleteInterval(props, request.params.sandboxIdOrName, parseInt(request.params.interval))
+            this.captureSetAutoDeleteInterval(props, request.params.sandboxIdOrName as string, parseInt(request.params.interval as string))
             break
           case '/api/organizations/invitations/:invitationId/accept':
-            this.captureAcceptInvitation(props, request.params.invitationId)
+            this.captureAcceptInvitation(props, request.params.invitationId as string)
             break
           case '/api/organizations/invitations/:invitationId/decline':
-            this.captureDeclineInvitation(props, request.params.invitationId)
+            this.captureDeclineInvitation(props, request.params.invitationId as string)
             break
           case '/api/organizations':
             this.captureCreateOrganization(props, request.body, response)
             break
           case '/api/organizations/:organizationId/leave':
-            this.captureLeaveOrganization(props, request.params.organizationId)
+            this.captureLeaveOrganization(props, request.params.organizationId as string)
             break
           case '/api/organizations/:organizationId/users/:userId/access':
             this.captureUpdateOrganizationUserAccess(
               props,
-              request.params.organizationId,
-              request.params.userId,
+              request.params.organizationId as string,
+              request.params.userId as string,
               request.body,
             )
             break
           case '/api/organizations/:organizationId/roles':
-            this.captureCreateOrganizationRole(props, request.params.organizationId, request.body)
+            this.captureCreateOrganizationRole(props, request.params.organizationId as string, request.body)
             break
           case '/api/organizations/:organizationId/invitations':
-            this.captureCreateOrganizationInvitation(props, request.params.organizationId, request.body)
+            this.captureCreateOrganizationInvitation(props, request.params.organizationId as string, request.body)
             break
           case '/api/organizations/:organizationId/invitations/:invitationId/cancel':
-            this.captureCancelOrganizationInvitation(props, request.params.organizationId, request.params.invitationId)
+            this.captureCancelOrganizationInvitation(props, request.params.organizationId as string, request.params.invitationId as string)
             break
           case '/api/volumes':
             this.captureCreateVolume(props, request.body, response)
@@ -245,23 +245,23 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
           case '/api/v1/:prefix/boxes/:boxId':
             this.captureDeleteSandbox(
               props,
-              request.params.sandboxIdOrName || request.params.workspaceId || request.params.boxId,
+              request.params.sandboxIdOrName as string || request.params.workspaceId as string || request.params.boxId as string,
             )
             break
           case '/api/snapshots/:snapshotId':
-            this.captureDeleteSnapshot(props, request.params.snapshotId)
+            this.captureDeleteSnapshot(props, request.params.snapshotId as string)
             break
           case '/api/organizations/:organizationId':
-            this.captureDeleteOrganization(props, request.params.organizationId)
+            this.captureDeleteOrganization(props, request.params.organizationId as string)
             break
           case '/api/organizations/:organizationId/users/:userId':
-            this.captureDeleteOrganizationUser(props, request.params.organizationId, request.params.userId)
+            this.captureDeleteOrganizationUser(props, request.params.organizationId as string, request.params.userId as string)
             break
           case '/api/organizations/:organizationId/roles/:roleId':
-            this.captureDeleteOrganizationRole(props, request.params.organizationId, request.params.roleId)
+            this.captureDeleteOrganizationRole(props, request.params.organizationId as string, request.params.roleId as string)
             break
           case '/api/volumes/:volumeId':
-            this.captureDeleteVolume(props, request.params.volumeId)
+            this.captureDeleteVolume(props, request.params.volumeId as string)
             break
         }
         break
@@ -269,21 +269,21 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
         switch (request.route.path) {
           case '/api/sandbox/:sandboxIdOrName/labels':
           case '/api/workspace/:workspaceId/labels':
-            this.captureUpdateSandboxLabels(props, request.params.sandboxIdOrName || request.params.workspaceId)
+            this.captureUpdateSandboxLabels(props, request.params.sandboxIdOrName as string || request.params.workspaceId as string)
             break
           case '/api/organizations/:organizationId/roles/:roleId':
             this.captureUpdateOrganizationRole(
               props,
-              request.params.organizationId,
-              request.params.roleId,
+              request.params.organizationId as string,
+              request.params.roleId as string,
               request.body,
             )
             break
           case '/api/organizations/:organizationId/invitations/:invitationId':
             this.captureUpdateOrganizationInvitation(
               props,
-              request.params.organizationId,
-              request.params.invitationId,
+              request.params.organizationId as string,
+              request.params.invitationId as string,
               request.body,
             )
             break
@@ -295,16 +295,16 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
       case 'PATCH':
         switch (request.route.path) {
           case '/api/organizations/:organizationId/default-region':
-            this.captureSetOrganizationDefaultRegion(props, request.params.organizationId, request.body)
+            this.captureSetOrganizationDefaultRegion(props, request.params.organizationId as string, request.body)
             break
           case '/api/organizations/:organizationId/quota':
-            this.captureUpdateOrganizationQuota(props, request.params.organizationId, request.body)
+            this.captureUpdateOrganizationQuota(props, request.params.organizationId as string, request.body)
             break
           case '/api/organizations/:organizationId/quota/:regionId':
             this.captureUpdateOrganizationRegionQuota(
               props,
-              request.params.organizationId,
-              request.params.regionId,
+              request.params.organizationId as string,
+              request.params.regionId as string,
               request.body,
             )
             break
@@ -320,78 +320,78 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
 
     switch (path) {
       case '/project-dir':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'project-dir_get')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'project-dir_get')
         break
       case '/files':
         switch (request.method) {
           case 'GET':
-            this.captureToolboxCommand(props, request.params.sandboxId, 'files_list')
+            this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_list')
             break
           case 'DELETE':
-            this.captureToolboxCommand(props, request.params.sandboxId, 'files_delete')
+            this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_delete')
             break
         }
         break
       case '/files/download':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_download')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_download')
         break
       case '/files/find':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_find')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_find')
         break
       case '/files/folder':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_folder_create')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_folder_create')
         break
       case '/files/info':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_info')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_info')
         break
       case '/files/move':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_move')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_move')
         break
       case '/files/permissions':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_permissions')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_permissions')
         break
       case '/files/replace':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_replace')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_replace')
         break
       case '/files/search':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_search')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_search')
         break
       case '/files/upload':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'files_upload')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'files_upload')
         break
       case '/git/add':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'git_add')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_add')
         break
       case '/git/branches':
         switch (request.method) {
           case 'GET':
-            this.captureToolboxCommand(props, request.params.sandboxId, 'git_branches_list')
+            this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_branches_list')
             break
           case 'POST':
-            this.captureToolboxCommand(props, request.params.sandboxId, 'git_branches_create')
+            this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_branches_create')
             break
         }
         break
       case '/git/clone':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'git_clone')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_clone')
         break
       case '/git/commit':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'git_commit')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_commit')
         break
       case '/git/history':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'git_history')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_history')
         break
       case '/git/pull':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'git_pull')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_pull')
         break
       case '/git/push':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'git_push')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_push')
         break
       case '/git/status':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'git_status')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'git_status')
         break
       case '/process/execute':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'process_execute', {
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'process_execute', {
           command: request.body.command,
           cwd: request.body.cwd,
           exit_code: response.exitCode,
@@ -401,10 +401,10 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
       case '/process/session':
         switch (request.method) {
           case 'GET':
-            this.captureToolboxCommand(props, request.params.sandboxId, 'process_session_list')
+            this.captureToolboxCommand(props, request.params.sandboxId as string, 'process_session_list')
             break
           case 'POST':
-            this.captureToolboxCommand(props, request.params.sandboxId, 'process_session_create', {
+            this.captureToolboxCommand(props, request.params.sandboxId as string, 'process_session_create', {
               session_id: request.body.sessionId,
             })
             break
@@ -413,59 +413,59 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
       case '/process/session/:sessionId':
         switch (request.method) {
           case 'GET':
-            this.captureToolboxCommand(props, request.params.sandboxId, 'process_session_get', {
-              session_id: request.params.sessionId,
+            this.captureToolboxCommand(props, request.params.sandboxId as string, 'process_session_get', {
+              session_id: request.params.sessionId as string,
             })
             break
           case 'DELETE':
-            this.captureToolboxCommand(props, request.params.sandboxId, 'process_session_delete', {
-              session_id: request.params.sessionId,
+            this.captureToolboxCommand(props, request.params.sandboxId as string, 'process_session_delete', {
+              session_id: request.params.sessionId as string,
             })
             break
         }
         break
       case '/process/session/:sessionId/exec':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'process_session_execute', {
-          session_id: request.params.sessionId,
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'process_session_execute', {
+          session_id: request.params.sessionId as string,
           command: request.body.command,
         })
         break
       case '/process/session/:sessionId/command/:commandId':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'process_session_command_get', {
-          session_id: request.params.sessionId,
-          command_id: request.params.commandId,
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'process_session_command_get', {
+          session_id: request.params.sessionId as string,
+          command_id: request.params.commandId as string,
         })
         break
       case '/process/session/:sessionId/command/:commandId/logs':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'process_session_command_logs', {
-          session_id: request.params.sessionId,
-          command_id: request.params.commandId,
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'process_session_command_logs', {
+          session_id: request.params.sessionId as string,
+          command_id: request.params.commandId as string,
         })
         break
       case '/lsp/completions':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'lsp_completions')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'lsp_completions')
         break
       case '/lsp/did-close':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'lsp_did_close')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'lsp_did_close')
         break
       case '/lsp/did-open':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'lsp_did_open')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'lsp_did_open')
         break
       case '/lsp/document-symbols':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'lsp_document_symbols')
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'lsp_document_symbols')
         break
       case '/lsp/start':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'lsp_start', {
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'lsp_start', {
           language_id: request.body.languageId,
         })
         break
       case '/lsp/stop':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'lsp_stop', {
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'lsp_stop', {
           language_id: request.body.languageId,
         })
         break
       case '/lsp/sandbox-symbols':
-        this.captureToolboxCommand(props, request.params.sandboxId, 'lsp_sandbox_symbols', {
+        this.captureToolboxCommand(props, request.params.sandboxId as string, 'lsp_sandbox_symbols', {
           language_id: request.query.languageId,
           path_to_project: request.query.pathToProject,
           query: request.query.query,

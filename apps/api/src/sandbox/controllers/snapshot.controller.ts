@@ -207,7 +207,7 @@ export class SnapshotController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.SNAPSHOT,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   async removeSnapshot(@Param('id') snapshotId: string): Promise<void> {
     await this.snapshotService.removeSnapshot(snapshotId)
@@ -263,7 +263,7 @@ export class SnapshotController {
   @Audit({
     action: AuditAction.SET_GENERAL_STATUS,
     targetType: AuditTarget.SNAPSHOT,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
     requestMetadata: {
       body: (req: TypedRequest<SetSnapshotGeneralStatusDto>) => ({
         general: req.body?.general,
@@ -413,7 +413,7 @@ export class SnapshotController {
   @Audit({
     action: AuditAction.ACTIVATE,
     targetType: AuditTarget.SNAPSHOT,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   async activateSnapshot(
     @Param('id') snapshotId: string,
@@ -442,7 +442,7 @@ export class SnapshotController {
   @Audit({
     action: AuditAction.DEACTIVATE,
     targetType: AuditTarget.SNAPSHOT,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   async deactivateSnapshot(@Param('id') snapshotId: string) {
     await this.snapshotService.deactivateSnapshot(snapshotId)

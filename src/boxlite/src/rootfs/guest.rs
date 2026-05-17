@@ -466,6 +466,70 @@ impl GuestRootfsManager {
             "build_and_install: inject guest binary done"
         );
 
+        // Inject static sshd binary (optional — skipped if not built yet).
+        // When present, boxlite-enable-ssh copies it from /boxlite/bin/sshd
+        // into the container rootfs at /usr/local/sbin/boxlite-sshd.
+        // Cache note: the version key does not include the sshd hash; clear
+        // the guest rootfs cache manually if sshd is updated between builds.
+        match util::find_binary("boxlite-sshd") {
+            Ok(sshd_bin) => {
+                inject_file_into_ext4(&staged_path, &sshd_bin, "boxlite/bin/sshd")?;
+                tracing::info!("build_and_install: inject boxlite-sshd done");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "boxlite-sshd not found, SSH access will be unavailable: {}",
+                    e
+                );
+            }
+        }
+
+        match util::find_binary("boxlite-ssh-keygen") {
+            Ok(keygen_bin) => {
+                inject_file_into_ext4(&staged_path, &keygen_bin, "boxlite/bin/ssh-keygen")?;
+                tracing::info!("build_and_install: inject boxlite-ssh-keygen done");
+            }
+            Err(e) => {
+                tracing::warn!("boxlite-ssh-keygen not found: {}", e);
+            }
+        }
+
+        // Inject SSH management scripts (embedded at compile time).
+        // They are written to a temp file and injected; inject_file_into_ext4
+        // sets mode 0100555 (executable) for all injected files.
+        {
+            use std::io::Write;
+
+            const SCRIPTS: &[(&[u8], &str)] = &[
+                (
+                    include_bytes!("../../../guest/scripts/boxlite-enable-ssh"),
+                    "usr/local/bin/boxlite-enable-ssh",
+                ),
+                (
+                    include_bytes!("../../../guest/scripts/boxlite-disable-ssh"),
+                    "usr/local/bin/boxlite-disable-ssh",
+                ),
+                (
+                    include_bytes!("../../../guest/scripts/boxlite-ensure-ssh"),
+                    "usr/local/bin/boxlite-ensure-ssh",
+                ),
+            ];
+
+            for (data, guest_path) in SCRIPTS {
+                let mut tmp = tempfile::NamedTempFile::new_in(temp.path()).map_err(|e| {
+                    BoxliteError::Storage(format!("Failed to create temp file for script: {}", e))
+                })?;
+                tmp.write_all(data).map_err(|e| {
+                    BoxliteError::Storage(format!("Failed to write script to temp file: {}", e))
+                })?;
+                tmp.flush().map_err(|e| {
+                    BoxliteError::Storage(format!("Failed to flush script temp file: {}", e))
+                })?;
+                inject_file_into_ext4(&staged_path, tmp.path(), guest_path)?;
+            }
+            tracing::info!("build_and_install: inject SSH management scripts done");
+        }
+
         // Atomic install: use the actual version key (may differ from expected)
         let staged_disk = Disk::new(staged_path, DiskFormat::Ext4, false);
         let result = self.install(&actual_version_key, staged_disk);

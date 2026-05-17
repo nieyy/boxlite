@@ -65,7 +65,7 @@ import { Audit, MASKED_AUDIT_VALUE, TypedRequest } from '../../audit/decorators/
 import { AuditAction } from '../../audit/enums/audit-action.enum'
 import { AuditTarget } from '../../audit/enums/audit-target.enum'
 // import { UpdateSandboxNetworkSettingsDto } from '../dto/update-sandbox-network-settings.dto'
-import { SshAccessDto, SshAccessValidationDto } from '../dto/ssh-access.dto'
+import { CreateSshAccessBodyDto, SshAccessDto, SshAccessValidationDto } from '../dto/ssh-access.dto'
 import { ListSandboxesQueryDto } from '../dto/list-sandboxes-query.dto'
 import { ProxyGuard } from '../guards/proxy.guard'
 import { OrGuard } from '../../auth/or.guard'
@@ -400,7 +400,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
   })
   async deleteSandbox(
@@ -434,7 +434,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.RECOVER,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
   })
   async recoverSandbox(
@@ -474,7 +474,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.START,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
   })
   async startSandbox(
@@ -520,7 +520,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.STOP,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
     requestMetadata: {
       query: (req) => ({
@@ -562,7 +562,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.RESIZE,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
     requestMetadata: {
       body: (req: TypedRequest<ResizeSandboxDto>) => ({
@@ -602,7 +602,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.REPLACE_LABELS,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
     requestMetadata: {
       body: (req: TypedRequest<SandboxLabelsDto>) => ({
@@ -672,7 +672,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.CREATE_BACKUP,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
   })
   async createBackup(
@@ -708,7 +708,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.UPDATE_PUBLIC_STATUS,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
     requestMetadata: {
       params: (req) => ({
@@ -769,7 +769,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.SET_AUTO_STOP_INTERVAL,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
     requestMetadata: {
       params: (req) => ({
@@ -811,7 +811,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.SET_AUTO_ARCHIVE_INTERVAL,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
     requestMetadata: {
       params: (req) => ({
@@ -858,7 +858,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.SET_AUTO_DELETE_INTERVAL,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
     requestMetadata: {
       params: (req) => ({
@@ -900,7 +900,7 @@ export class SandboxController {
   // @Audit({
   //   action: AuditAction.UPDATE_NETWORK_SETTINGS,
   //   targetType: AuditTarget.SANDBOX,
-  //   targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+  //   targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
   //   targetIdFromResult: (result: SandboxDto) => result?.id,
   //   requestMetadata: {
   //     body: (req: TypedRequest<UpdateSandboxNetworkSettingsDto>) => ({
@@ -941,7 +941,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.ARCHIVE,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
   })
   async archiveSandbox(
@@ -1166,7 +1166,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.CREATE_SSH_ACCESS,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SshAccessDto) => result?.sandboxId,
     requestMetadata: {
       query: (req) => ({
@@ -1178,8 +1178,10 @@ export class SandboxController {
     @AuthContext() authContext: OrganizationAuthContext,
     @Param('sandboxIdOrName') sandboxIdOrName: string,
     @Query('expiresInMinutes') expiresInMinutes?: number,
+    @Body() body?: CreateSshAccessBodyDto,
   ): Promise<SshAccessDto> {
-    return await this.sandboxService.createSshAccess(sandboxIdOrName, expiresInMinutes, authContext.organizationId)
+    const unixUser = body?.unixUser?.trim() || body?.unix_user?.trim() || null
+    return await this.sandboxService.createSshAccess(sandboxIdOrName, expiresInMinutes, authContext.organizationId, [], unixUser)
   }
 
   @Delete(':sandboxIdOrName/ssh-access')
@@ -1209,7 +1211,7 @@ export class SandboxController {
   @Audit({
     action: AuditAction.REVOKE_SSH_ACCESS,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxIdOrName,
+    targetIdFromRequest: (req) => req.params.sandboxIdOrName as string,
     targetIdFromResult: (result: SandboxDto) => result?.id,
     requestMetadata: {
       query: (req) => ({
@@ -1244,7 +1246,7 @@ export class SandboxController {
   })
   async validateSshAccess(@Query('token') token: string): Promise<SshAccessValidationDto> {
     const result = await this.sandboxService.validateSshAccess(token)
-    return SshAccessValidationDto.fromValidationResult(result.valid, result.sandboxId)
+    return SshAccessValidationDto.fromValidationResult(result.valid, result.sandboxId, result.unixUser)
   }
 
   @Get(':sandboxId/toolbox-proxy-url')

@@ -1,0 +1,35 @@
+#!/bin/sh
+# Usage: boxlite-disable-ssh <unix_user>
+# Stops sshd and removes the SSH enabled marker.
+set -e
+
+UNIX_USER="${1:?Usage: boxlite-disable-ssh <unix_user>}"
+HOME_DIR="/home/$UNIX_USER"
+SSH_DIR="$HOME_DIR/.ssh"
+PID_FILE="/tmp/boxlite-sshd.pid"
+
+# Stop sshd (SIGTERM, then SIGKILL after 5s)
+if [ -f "$PID_FILE" ]; then
+    PID=$(cat "$PID_FILE")
+    kill "$PID" 2>/dev/null || true
+    i=0
+    while [ $i -lt 5 ] && kill -0 "$PID" 2>/dev/null; do
+        sleep 1
+        i=$((i + 1))
+    done
+    if kill -0 "$PID" 2>/dev/null; then
+        kill -9 "$PID" 2>/dev/null || true
+    fi
+    rm -f "$PID_FILE"
+fi
+
+# Remove restart-recovery marker and authorized_keys
+rm -f "$SSH_DIR/.ssh_enabled"
+rm -f "$SSH_DIR/authorized_keys"
+
+# Remove passwordless-sudo grant created by boxlite-enable-ssh.
+# Only the default "boxlite" user gets a sudoers drop-in (see boxlite-enable-ssh);
+# custom unix_users may have pre-existing sudoers files that must not be removed.
+if [ "$UNIX_USER" = "boxlite" ]; then
+    rm -f "/etc/sudoers.d/$UNIX_USER"
+fi

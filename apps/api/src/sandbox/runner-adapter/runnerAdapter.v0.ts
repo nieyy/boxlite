@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0
  */
 
-import axios, { AxiosError } from 'axios'
+import axios, { AxiosError, AxiosInstance } from 'axios'
 import axiosDebug from 'axios-debug-log'
 import axiosRetry from 'axios-retry'
 
@@ -53,6 +53,7 @@ export class RunnerAdapterV0 implements RunnerAdapter {
   private snapshotApiClient: SnapshotsApi
   private runnerApiClient: DefaultApi
   private toolboxApiClient: ToolboxApi
+  private axiosInstance: AxiosInstance
 
   private convertSandboxState(state: EnumsSandboxState): SandboxState {
     switch (state) {
@@ -153,6 +154,7 @@ export class RunnerAdapterV0 implements RunnerAdapter {
       axiosDebug.addLogger(axiosInstance)
     }
 
+    this.axiosInstance = axiosInstance
     this.sandboxApiClient = new SandboxApi(new Configuration(), '', axiosInstance)
     this.snapshotApiClient = new SnapshotsApi(new Configuration(), '', axiosInstance)
     this.runnerApiClient = new DefaultApi(new Configuration(), '', axiosInstance)
@@ -442,5 +444,13 @@ export class RunnerAdapterV0 implements RunnerAdapter {
 
   async resizeSandbox(sandboxId: string, cpu?: number, memory?: number, disk?: number): Promise<void> {
     await this.sandboxApiClient.resize(sandboxId, { cpu, memory, disk })
+  }
+
+  async enableSSHAccess(sandboxId: string, unixUser: string): Promise<void> {
+    await this.axiosInstance.post(`/v1/boxes/${sandboxId}/ssh-access`, { unix_user: unixUser })
+  }
+
+  async disableSSHAccess(sandboxId: string): Promise<void> {
+    await this.axiosInstance.delete(`/v1/boxes/${sandboxId}/ssh-access`)
   }
 }

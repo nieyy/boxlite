@@ -114,6 +114,13 @@ export interface RunnerAdapter {
   recoverSandbox(sandbox: Sandbox): Promise<void>
 
   resizeSandbox(sandboxId: string, cpu?: number, memory?: number, disk?: number): Promise<void>
+
+  // enableSSHAccess configures real-SSH access (gvproxy port-forward + sshd) on
+  // the runner for the given sandbox. unixUser is the guest account to allow.
+  enableSSHAccess(sandboxId: string, unixUser: string): Promise<void>
+
+  // disableSSHAccess tears down the real-SSH access previously enabled by enableSSHAccess.
+  disableSSHAccess(sandboxId: string): Promise<void>
 }
 
 @Injectable()

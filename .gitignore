@@ -176,3 +176,5 @@ Cargo.lock
 /runner
 .claude/scheduled_tasks.lock
 .claude/worktrees/
+.nx/cache
+.nx/workspace-data

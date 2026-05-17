@@ -132,7 +132,7 @@ export class BoxliteBoxController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.boxId,
+    targetIdFromRequest: (req) => req.params.boxId as string,
   })
   async removeBox(
     @AuthContext() authContext: OrganizationAuthContext,
@@ -145,7 +145,7 @@ export class BoxliteBoxController {
   @Audit({
     action: AuditAction.START,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.boxId,
+    targetIdFromRequest: (req) => req.params.boxId as string,
     targetIdFromResult: (result: BoxResponseDto) => result?.box_id,
   })
   async startBox(
@@ -182,7 +182,7 @@ export class BoxliteBoxController {
   @Audit({
     action: AuditAction.STOP,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.boxId,
+    targetIdFromRequest: (req) => req.params.boxId as string,
     targetIdFromResult: (result: BoxResponseDto) => result?.box_id,
   })
   async stopBox(

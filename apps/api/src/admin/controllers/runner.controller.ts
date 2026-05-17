@@ -148,7 +148,7 @@ export class AdminRunnerController {
   @Audit({
     action: AuditAction.UPDATE_SCHEDULING,
     targetType: AuditTarget.RUNNER,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
     requestMetadata: {
       body: (req: TypedRequest<{ unschedulable: boolean }>) => ({
         unschedulable: req.body?.unschedulable,
@@ -179,7 +179,7 @@ export class AdminRunnerController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.RUNNER,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   async delete(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.runnerService.remove(id)

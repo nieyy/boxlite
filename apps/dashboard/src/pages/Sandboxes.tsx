@@ -835,7 +835,7 @@ const Sandboxes: React.FC = () => {
   const handleCreateSshAccess = async (id: string) => {
     setSandboxIsLoading((prev) => ({ ...prev, [id]: true }))
     try {
-      const response = await sandboxApi.createSshAccess(id, selectedOrganization?.id, sshExpiryMinutes)
+      const response = await sandboxApi.createSshAccess(id, selectedOrganization?.id, sshExpiryMinutes, { unix_user: 'root' })
       setSshAccess(response.data)
       setSshSandboxId(id)
       setShowCreateSshDialog(true)

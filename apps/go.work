@@ -6,5 +6,6 @@ use (
 	./common-go
 	./api-client-go
 	./libs/computer-use
+	./ssh-gateway
 	../sdks/go
 )
