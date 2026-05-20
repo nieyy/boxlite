@@ -460,14 +460,34 @@ When `SSH_GATEWAY_ENABLE=true`, the runner also listens on a configurable
 TCP port (`pkg/sshgateway/config.go::GetSSHGatewayPort`). Clients
 authenticate with a single shared public key configured on the runner
 (`GetSSHPublicKey`), and the **SSH username is interpreted as the
-sandbox ID**. Once authenticated, the handler opens an SSH client
-connection from the runner to `<sandboxId>:22220` (the toolbox SSH
-endpoint inside the box) and copies channels + requests bidirectionally.
+sandbox ID**. Once authenticated, the handler routes `session` channels
+directly to the BoxLite exec bridge (`pkg/sshgateway/service.go::runExec`)
+— the same path used by the WebSocket terminal — without a separate inner
+SSH connection.
 
-Caveat: the inner client→box connection currently uses a hardcoded
-password and `ssh.InsecureIgnoreHostKey`. That's safe only because the
-inner connection never leaves the runner's network. Don't expose the
-gateway port directly to untrusted clients without auditing this path.
+Supported operations:
+
+- **interactive shell** — `ssh -t <sandboxId>` opens `/bin/sh` with a PTY (required).
+- **PTY exec** — `ssh -t <sandboxId> <command>` runs the command inside the box with a PTY
+  allocated by the client (`-t` flag). Sessions always run as the `boxlite` unix user — the
+  unprivileged account present in all BoxLite-managed sandbox images. Images without a
+  `boxlite` account (e.g. `python:slim`, `alpine`) are not supported via the SSH gateway;
+  use the WebSocket terminal or the SDK exec API instead.
+
+Not supported:
+
+- **Non-PTY exec and shell**: `ssh <sandboxId> <command>` without the `-t` flag is **rejected**
+  with a clear error message written to stderr. The underlying exec pipeline converts guest
+  stdout/stderr bytes to String via `String::from_utf8_lossy`, which silently corrupts any
+  non-UTF-8 byte sequences. Binary-producing commands (e.g.
+  `ssh host 'cat archive.tar' > out.tar`, `base64 -d`, legacy `scp -t`/`scp -f` exec mode)
+  would produce silently corrupted output without a PTY. Always use `-t` for interactive or
+  command sessions; use the `/v1/boxes/:boxId/files` endpoint for binary file transfers.
+- **Non-session channels** (e.g. `direct-tcpip` port forwarding): rejected with `UnknownChannelType`.
+- **Binary subsystems** (e.g. SFTP via `sftp`, `scp -s`, VS Code Remote): the exec stream pipeline
+  converts guest output bytes to UTF-8 strings internally (`String::from_utf8_lossy`), which
+  silently corrupts non-UTF-8 binary protocol bytes. Subsystem requests are rejected with a clean
+  protocol error to prevent silent data corruption.
 
 ---
 

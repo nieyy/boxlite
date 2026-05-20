@@ -84,6 +84,16 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
             core.exportVariable('ACTIONS_CACHE_SERVICE_V2', process.env.ACTIONS_CACHE_SERVICE_V2 || '');
 
+      - name: Build static sshd (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          bash scripts/build/build-static-sshd.sh dist
+          chmod +x dist/boxlite-sshd dist/boxlite-ssh-keygen
+          # Sanity check: verify static linking
+          file dist/boxlite-sshd | grep -q "statically linked" || \
+            { echo "ERROR: boxlite-sshd is not statically linked" >&2; exit 1; }
+          echo "Built static sshd: $(file dist/boxlite-sshd)"
+
       # Build guest on host BEFORE manylinux container because:
       # - manylinux (AlmaLinux/RHEL) doesn't have musl packages in repos
       # - Building musl-cross-make from source takes ~15 minutes

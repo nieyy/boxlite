@@ -188,7 +188,7 @@ export class DockerRegistryController {
   @Audit({
     action: AuditAction.UPDATE,
     targetType: AuditTarget.DOCKER_REGISTRY,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
     requestMetadata: {
       body: (req: TypedRequest<UpdateDockerRegistryDto>) => ({
         name: req.body?.name,
@@ -227,7 +227,7 @@ export class DockerRegistryController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.DOCKER_REGISTRY,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   async remove(@Param('id') registryId: string): Promise<void> {
     return this.dockerRegistryService.remove(registryId)
@@ -253,7 +253,7 @@ export class DockerRegistryController {
   @Audit({
     action: AuditAction.SET_DEFAULT,
     targetType: AuditTarget.DOCKER_REGISTRY,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   async setDefault(@Param('id') registryId: string): Promise<DockerRegistryDto> {
     const dockerRegistry = await this.dockerRegistryService.setDefault(registryId)

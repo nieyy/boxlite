@@ -1,7 +1,12 @@
-PHONY_TARGETS += guest shim runtime cli cli\:release skillbox-image build\:apps
+PHONY_TARGETS += guest shim runtime cli cli\:release skillbox-image build\:apps sshd
 
 guest:
 	@bash $(SCRIPT_DIR)/build/build-guest.sh
+
+# Build statically-linked boxlite-sshd and boxlite-ssh-keygen via Alpine Docker.
+# Requires Docker. Output goes to dist/; same script is used by CI.
+sshd:
+	@bash $(SCRIPT_DIR)/build/build-static-sshd.sh dist
 
 shim:
 	@bash $(SCRIPT_DIR)/build/build-shim.sh

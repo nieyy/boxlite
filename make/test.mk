@@ -315,6 +315,26 @@ test\:apps: _ensure-apps-deps dev\:go
 	@echo "🧪 Running apps workspace test matrix..."
 	@cd apps && GOFLAGS=-tags=boxlite_dev yarn nx run-many --target=test --all --parallel=$$(getconf _NPROCESSORS_ONLN) $(if $(FILTER),-- --testNamePattern '$(FILTER)',)
 
+# SSH integration tests: verify real-SSH access to a running sandbox.
+# Connects directly to the sshd inside the VM (bypassing the SSH Gateway).
+# Tests: non-PTY exec output, exit-code propagation, SFTP binary round-trip,
+# scp binary round-trip, interactive shell with PTY.
+#
+# Required env vars:
+#   BOXLITE_SSH_HOST      – Runner EC2 hostname or IP
+#   BOXLITE_SSH_PORT      – Host port allocated for the sandbox (22100-22199)
+#   BOXLITE_SSH_KEY_FILE  – Path to the SSH private key installed in the sandbox
+#
+# Optional:
+#   BOXLITE_SSH_USER      – Unix user inside the VM (default: boxlite)
+test\:integration\:ssh:
+	@echo "🧪 Running SSH integration tests (requires a running sandbox with SSH enabled)..."
+	@: $${BOXLITE_SSH_HOST:?BOXLITE_SSH_HOST must be set}
+	@: $${BOXLITE_SSH_PORT:?BOXLITE_SSH_PORT must be set}
+	@: $${BOXLITE_SSH_KEY_FILE:?BOXLITE_SSH_KEY_FILE must be set}
+	@cd apps && go test -tags integration -v -timeout 120s \
+		./runner/pkg/sshgateway/...
+
 # Installer-script smoke test: structural assertions on the rendered
 # install.sh (atomic replace, integrity envelope, pinned-install trust
 # tiers). Runs in a couple of seconds, no toolchain required beyond sh.

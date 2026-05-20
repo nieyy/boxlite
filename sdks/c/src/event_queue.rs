@@ -499,6 +499,7 @@ mod phase2_regression_tests {
             tokio_rt,
             liveness: Arc::new(RuntimeLiveness::new()),
             queue: Arc::new(EventQueue::new()),
+            home_dir: std::path::PathBuf::new(),
         }))
     }
 
@@ -804,6 +805,7 @@ mod close_and_free_tests {
             tokio_rt,
             liveness: Arc::new(RuntimeLiveness::new()),
             queue: Arc::new(EventQueue::new()),
+            home_dir: std::path::PathBuf::new(),
         }))
     }
 

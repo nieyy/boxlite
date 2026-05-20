@@ -35,7 +35,7 @@ export class OrganizationAccessGuard implements CanActivate {
     }
 
     // note: semantic parameter names must be used (avoid :id)
-    const organizationIdParam = request.params.organizationId || request.params.orgId || request.params.prefix
+    const organizationIdParam = request.params.organizationId as string || request.params.orgId as string || request.params.prefix as string
 
     if (
       authContext.role !== 'ssh-gateway' &&

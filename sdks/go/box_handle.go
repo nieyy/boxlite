@@ -39,6 +39,23 @@ func (b *Box) ID() string { return b.id }
 // Name returns the user-defined name of the box, if set.
 func (b *Box) Name() string { return b.name }
 
+// AdminSockPath returns the path to the gvproxy HTTP admin Unix socket for
+// this box. The runner uses this socket to manage port forwarding rules
+// (e.g. expose/unexpose host ports to the guest sshd).
+// Returns an empty string for REST-backed runtimes (no local filesystem).
+func (b *Box) AdminSockPath() string {
+	if b.handle == nil {
+		return ""
+	}
+	cPath := C.boxlite_box_admin_sock_path(b.handle)
+	if cPath == nil {
+		return ""
+	}
+	path := C.GoString(cPath)
+	freeBoxliteString(cPath)
+	return path
+}
+
 // Start starts (or restarts) the box.
 func (b *Box) Start(ctx context.Context) error {
 	b.runtime.ensureDrainRunning()

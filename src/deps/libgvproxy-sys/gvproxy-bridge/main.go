@@ -19,6 +19,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -182,6 +183,7 @@ type DNSZone struct {
 // GvproxyConfig matches the Rust structure (must stay in sync!)
 type GvproxyConfig struct {
 	SocketPath       string         `json:"socket_path"`
+	AdminSockPath    string         `json:"admin_sock_path"`
 	Subnet           string         `json:"subnet"`
 	GatewayIP        string         `json:"gateway_ip"`
 	GatewayMac       string         `json:"gateway_mac"`
@@ -460,6 +462,31 @@ func gvproxy_create(configJSON *C.char, errOut **C.char) C.longlong {
 		instance.vnMu.Lock()
 		instance.vn = vn
 		instance.vnMu.Unlock()
+
+		// Start admin HTTP server for dynamic port forwarding.
+		// The runner calls POST /services/forwarder/expose on this socket to
+		// forward a host port to the guest sshd (port 22222) for real SSH access.
+		adminSockPath := config.AdminSockPath
+		if err := os.Remove(adminSockPath); err != nil && !os.IsNotExist(err) {
+			logrus.WithFields(logrus.Fields{"error": err, "path": adminSockPath}).Warn("Failed to remove stale gvproxy admin socket")
+		}
+		adminListener, adminErr := net.Listen("unix", adminSockPath)
+		if adminErr != nil {
+			logrus.WithFields(logrus.Fields{"error": adminErr, "path": adminSockPath}).Error("Failed to create gvproxy admin socket; SSH port forwarding will be unavailable")
+		} else {
+			adminServer := &http.Server{Handler: vn.ServicesMux()}
+			go func() {
+				if serveErr := adminServer.Serve(adminListener); serveErr != nil && ctx.Err() == nil {
+					logrus.WithField("error", serveErr).Error("gvproxy admin HTTP server exited unexpectedly")
+				}
+			}()
+			go func() {
+				<-ctx.Done()
+				adminServer.Close()
+				os.Remove(adminSockPath)
+			}()
+			logrus.WithField("path", adminSockPath).Info("gvproxy admin HTTP server started")
+		}
 
 		// Platform-specific packet handling
 		if runtime.GOOS == "darwin" {

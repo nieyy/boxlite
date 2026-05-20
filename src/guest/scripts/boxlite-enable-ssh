@@ -1,0 +1,111 @@
+#!/bin/sh
+# Usage: printf 'ssh-pubkey\n' | boxlite-enable-ssh <unix_user>
+# Installs authorized_keys and starts sshd on port 22222.
+set -e
+
+UNIX_USER="${1:?Usage: boxlite-enable-ssh <unix_user>}"
+if [ "$UNIX_USER" = "root" ]; then
+    HOME_DIR="/root"
+else
+    HOME_DIR="/home/$UNIX_USER"
+fi
+SSH_DIR="$HOME_DIR/.ssh"
+SSHD_BIN="/usr/local/sbin/boxlite-sshd"
+KEYGEN_BIN="/usr/local/bin/boxlite-ssh-keygen"
+HOST_KEY="/etc/ssh/boxlite_ssh_host_ed25519_key"
+SSHD_CONFIG="/etc/ssh/sshd_config_boxlite"
+PID_FILE="/tmp/boxlite-sshd.pid"
+
+# OpenSSH privilege separation requires /var/empty and a dedicated 'sshd'
+# system user. Minimal container images (e.g. Ubuntu) omit the sshd user;
+# create it here when absent using the same UID-scan pattern as unix_user
+# below so we never collide with an existing image account.
+mkdir -p /var/empty
+chmod 755 /var/empty
+if ! grep -q "^sshd:" /etc/passwd 2>/dev/null; then
+    _sshd_uid=22
+    while grep -q "^[^:]*:[^:]*:${_sshd_uid}:" /etc/passwd 2>/dev/null || \
+          grep -q "^[^:]*:[^:]*:${_sshd_uid}:" /etc/group 2>/dev/null; do
+        _sshd_uid=$((_sshd_uid + 1))
+    done
+    mkdir -p /var/empty/sshd
+    chmod 711 /var/empty/sshd
+    printf 'sshd:x:%d:%d:sshd privsep:/var/empty/sshd:/sbin/nologin\n' \
+        "$_sshd_uid" "$_sshd_uid" >> /etc/passwd
+    printf 'sshd:x:%d:\n' "$_sshd_uid" >> /etc/group
+fi
+
+# Add unix user to /etc/passwd if absent.
+# Scan from UID 1000 upward to find a UID not already in /etc/passwd or
+# /etc/group, so we never collide with an existing image user.
+if ! grep -q "^${UNIX_USER}:" /etc/passwd 2>/dev/null; then
+    _uid=1000
+    while grep -q "^[^:]*:[^:]*:${_uid}:" /etc/passwd 2>/dev/null || \
+          grep -q "^[^:]*:[^:]*:${_uid}:" /etc/group 2>/dev/null; do
+        _uid=$((_uid + 1))
+    done
+    printf '%s:x:%d:%d::%s:/bin/sh\n' "$UNIX_USER" "$_uid" "$_uid" "$HOME_DIR" >> /etc/passwd
+    printf '%s:x:%d:\n' "$UNIX_USER" "$_uid" >> /etc/group
+fi
+
+# Grant passwordless sudo only for the default "boxlite" user (EC2 ec2-user
+# pattern; VM isolation is the security boundary). Custom unix_users are
+# explicitly scoped by the caller and must not receive unrestricted root.
+if [ "$UNIX_USER" = "boxlite" ]; then
+    mkdir -p /etc/sudoers.d
+    printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$UNIX_USER" > "/etc/sudoers.d/$UNIX_USER"
+    chmod 440 "/etc/sudoers.d/$UNIX_USER"
+fi
+
+# Create .ssh directory with correct permissions
+mkdir -p "$SSH_DIR"
+chmod 700 "$SSH_DIR"
+
+# Write authorized_keys from stdin
+cat > "$SSH_DIR/authorized_keys"
+chmod 600 "$SSH_DIR/authorized_keys"
+
+# Marker for restart recovery (checked by boxlite-ensure-ssh)
+touch "$SSH_DIR/.ssh_enabled"
+
+# Generate ed25519 host key if not present
+if [ ! -f "$HOST_KEY" ]; then
+    mkdir -p /etc/ssh
+    "$KEYGEN_BIN" -t ed25519 -f "$HOST_KEY" -N "" -q
+fi
+
+# Write sshd_config
+mkdir -p /etc/ssh
+cat > "$SSHD_CONFIG" <<SSHD_EOF
+Port 22222
+HostKey $HOST_KEY
+AuthorizedKeysFile $SSH_DIR/authorized_keys
+PasswordAuthentication no
+PermitRootLogin prohibit-password
+UsePAM no
+UsePrivilegeSeparation no
+Subsystem sftp internal-sftp
+AllowUsers $UNIX_USER
+SSHD_EOF
+
+# Stop any existing instance
+if [ -f "$PID_FILE" ]; then
+    kill "$(cat "$PID_FILE")" 2>/dev/null || true
+    rm -f "$PID_FILE"
+fi
+
+# Start sshd (daemonises when -D is absent)
+"$SSHD_BIN" -f "$SSHD_CONFIG" -o "PidFile=$PID_FILE"
+
+# Verify sshd started within 5s
+i=0
+while [ $i -lt 5 ]; do
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        exit 0
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+printf 'boxlite-sshd failed to start\n' >&2
+exit 1

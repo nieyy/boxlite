@@ -36,6 +36,10 @@ pub struct BoxHandle {
     pub box_id: BoxID,
     pub tokio_rt: Arc<TokioRuntime>,
     pub queue: Arc<EventQueue>,
+    /// Runtime home directory, copied from RuntimeHandle at box creation time.
+    /// Used by boxlite_box_admin_sock_path to construct per-box socket paths
+    /// without requiring a live runtime reference.
+    pub home_dir: std::path::PathBuf,
 }
 
 #[unsafe(no_mangle)]
@@ -97,6 +101,35 @@ pub unsafe extern "C" fn boxlite_box_id(handle: *mut CBoxHandle) -> *mut c_char 
     box_id(handle)
 }
 
+/// Returns the path to the gvproxy HTTP admin Unix socket for this box.
+///
+/// The path follows the layout: `<home_dir>/boxes/<box_id>/sockets/gvproxy-admin.sock`
+///
+/// The caller must free the returned string with `boxlite_free_string`.
+/// Returns NULL if handle is NULL or home_dir is not set (e.g. REST runtime).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn boxlite_box_admin_sock_path(handle: *mut CBoxHandle) -> *mut c_char {
+    unsafe {
+        if handle.is_null() {
+            return ptr::null_mut();
+        }
+        let handle_ref = &*handle;
+        if handle_ref.home_dir.as_os_str().is_empty() {
+            return ptr::null_mut();
+        }
+        let path = handle_ref
+            .home_dir
+            .join("boxes")
+            .join(handle_ref.box_id.as_str())
+            .join("sockets")
+            .join("gvproxy-admin.sock");
+        match std::ffi::CString::new(path.to_string_lossy().as_ref()) {
+            Ok(s) => s.into_raw(),
+            Err(_) => ptr::null_mut(),
+        }
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn boxlite_box_free(handle: *mut CBoxHandle) {
     box_free(handle)
@@ -125,6 +158,7 @@ unsafe fn create_box(
         let runtime_clone = runtime_ref.runtime.clone();
         let tokio_rt = runtime_ref.tokio_rt.clone();
         let queue = runtime_ref.queue.clone();
+        let home_dir = runtime_ref.home_dir.clone();
         let user_data_addr = user_data as usize;
         let task_tokio_rt = tokio_rt.clone();
         let task_queue = queue.clone();
@@ -140,6 +174,7 @@ unsafe fn create_box(
                         box_id,
                         tokio_rt: task_tokio_rt,
                         queue: task_queue.clone(),
+                        home_dir: home_dir.clone(),
                     });
                     crate::event_queue::OwnedFfiPtr::new(boxed)
                 });
@@ -219,6 +254,7 @@ unsafe fn attach_box(
         let runtime_clone = runtime_ref.runtime.clone();
         let tokio_rt = runtime_ref.tokio_rt.clone();
         let queue = runtime_ref.queue.clone();
+        let home_dir = runtime_ref.home_dir.clone();
         let user_data_addr = user_data as usize;
         let task_tokio_rt = tokio_rt.clone();
         let task_queue = queue.clone();
@@ -232,6 +268,7 @@ unsafe fn attach_box(
                         box_id,
                         tokio_rt: task_tokio_rt,
                         queue: task_queue.clone(),
+                        home_dir: home_dir.clone(),
                     });
                     Ok(crate::event_queue::OwnedFfiPtr::new(boxed))
                 }

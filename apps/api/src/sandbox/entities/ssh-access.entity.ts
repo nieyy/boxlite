@@ -35,6 +35,9 @@ export class SshAccess {
   })
   expiresAt: Date
 
+  @Column({ type: 'text', nullable: true })
+  unixUser: string | null
+
   @CreateDateColumn()
   createdAt: Date
 

@@ -392,6 +392,14 @@ impl BoxFilesystemLayout {
         self.sockets_dir().join("net.sock")
     }
 
+    /// gvproxy HTTP admin socket: ~/.boxlite/boxes/{box_id}/sockets/gvproxy-admin.sock
+    ///
+    /// The runner uses this socket to manage port forwarding rules via
+    /// gvproxy's HTTP admin API (e.g. expose/unexpose host ports to the guest).
+    pub fn gvproxy_admin_sock_path(&self) -> PathBuf {
+        self.sockets_dir().join("gvproxy-admin.sock")
+    }
+
     // ========================================================================
     // MOUNTS AND SHARED
     // ========================================================================

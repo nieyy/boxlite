@@ -32,6 +32,27 @@ else
   fi
 fi
 
+# Resolve SSH_GATEWAY_PUBLIC_KEY locally before constructing the remote script.
+# SSH_GATEWAY_PUBLIC_KEY may be set explicitly, or derived from SSH_PRIVATE_KEY_B64.
+# If neither is available the key stays empty and we skip the inject (the runner
+# will refuse SSH-enable requests, which is acceptable when SSH is not configured).
+if [[ -z "${SSH_GATEWAY_PUBLIC_KEY:-}" && -n "${SSH_PRIVATE_KEY_B64:-}" ]]; then
+  _TMP_KEY=$(mktemp)
+  printf '%s' "$SSH_PRIVATE_KEY_B64" | base64 -d > "$_TMP_KEY"
+  chmod 600 "$_TMP_KEY"
+  _DERIVED=$(ssh-keygen -y -f "$_TMP_KEY" 2>&1) || {
+    rm -f "$_TMP_KEY"
+    echo "error: could not derive SSH_GATEWAY_PUBLIC_KEY from SSH_PRIVATE_KEY_B64: $_DERIVED" >&2
+    exit 1
+  }
+  rm -f "$_TMP_KEY"
+  SSH_GATEWAY_PUBLIC_KEY="$_DERIVED"
+fi
+
+# Default SSH_GATEWAY_PUBLIC_KEY to empty so the heredoc below does not
+# trigger an unbound-variable error (set -u) when SSH is not configured.
+SSH_GATEWAY_PUBLIC_KEY="${SSH_GATEWAY_PUBLIC_KEY:-}"
+
 echo "==> Upgrading boxlite-runner to v$VERSION on stage=$STAGE region=$AWS_REGION"
 
 INSTANCE_ID=$(aws ec2 describe-instances --region "$AWS_REGION" \
@@ -54,6 +75,27 @@ echo "current version:"
 systemctl stop boxlite-runner
 curl -fsSL "${ASSET_URL}" | tar xz -C /usr/local/bin/
 chmod +x /usr/local/bin/boxlite-runner
+
+# Ensure the live systemd unit carries the env vars added in the user-data
+# update (SSH_GATEWAY_PUBLIC_KEY). The Runner EC2 has
+# ignoreChanges: ["ami", "userDataBase64"] so sst deploy never rewrites the
+# unit on an existing instance; this script is the authoritative update path.
+UNIT=/etc/systemd/system/boxlite-runner.service
+
+# Inject or update SSH_GATEWAY_PUBLIC_KEY only when a key was provided.
+# SSH_GATEWAY_PUBLIC_KEY is resolved on the deploy host before this script
+# is sent to SSM; the value is expanded into the heredoc at send time.
+# When no key is available locally we leave the existing unit line untouched
+# so a previously working SSH configuration is not erased.
+if [ -n "${SSH_GATEWAY_PUBLIC_KEY}" ]; then
+  if grep -q '^Environment=SSH_GATEWAY_PUBLIC_KEY=' "\$UNIT"; then
+    sed -i 's|^Environment=SSH_GATEWAY_PUBLIC_KEY=.*|Environment=SSH_GATEWAY_PUBLIC_KEY="${SSH_GATEWAY_PUBLIC_KEY}"|' "\$UNIT"
+  else
+    sed -i '/^Environment=BOXLITE_RUNNER_TOKEN=/a Environment=SSH_GATEWAY_PUBLIC_KEY="${SSH_GATEWAY_PUBLIC_KEY}"' "\$UNIT"
+  fi
+fi
+
+systemctl daemon-reload
 systemctl start boxlite-runner
 
 sleep 2

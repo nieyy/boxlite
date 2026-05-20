@@ -71,7 +71,7 @@ export class OrganizationUserController {
   @Audit({
     action: AuditAction.UPDATE_ACCESS,
     targetType: AuditTarget.ORGANIZATION_USER,
-    targetIdFromRequest: (req) => req.params.userId,
+    targetIdFromRequest: (req) => req.params.userId as string,
     requestMetadata: {
       body: (req: TypedRequest<UpdateOrganizationMemberAccessDto>) => ({
         role: req.body?.role,
@@ -115,7 +115,7 @@ export class OrganizationUserController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.ORGANIZATION_USER,
-    targetIdFromRequest: (req) => req.params.userId,
+    targetIdFromRequest: (req) => req.params.userId as string,
   })
   async delete(@Param('organizationId') organizationId: string, @Param('userId') userId: string): Promise<void> {
     return this.organizationUserService.delete(organizationId, userId)

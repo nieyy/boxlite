@@ -357,7 +357,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_DELETE_FILE,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       query: (req) => ({
         path: req.query.path,
@@ -392,7 +392,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_DOWNLOAD_FILE,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       query: (req) => ({
         path: req.query.path,
@@ -476,7 +476,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_CREATE_FOLDER,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       query: (req) => ({
         path: req.query.path,
@@ -533,7 +533,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_MOVE_FILE,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       query: (req) => ({
         destination: req.query.destination,
@@ -570,7 +570,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_SET_FILE_PERMISSIONS,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       query: (req) => ({
         mode: req.query.mode,
@@ -609,7 +609,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_REPLACE_IN_FILES,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<ReplaceRequestDto>) => ({
         files: req.body?.files,
@@ -678,7 +678,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_UPLOAD_FILE,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       query: (req) => ({
         path: req.query.path,
@@ -711,7 +711,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_BULK_UPLOAD_FILES,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
   })
   async uploadFiles(
     @Request() req: RawBodyRequest<IncomingMessage>,
@@ -742,7 +742,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_GIT_ADD_FILES,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<GitAddRequestDto>) => ({
         path: req.body?.path,
@@ -800,7 +800,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_GIT_CREATE_BRANCH,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<GitBranchRequestDto>) => ({
         path: req.body?.path,
@@ -836,7 +836,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_GIT_DELETE_BRANCH,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<GitDeleteBranchRequestDto>) => ({
         path: req.body?.path,
@@ -872,7 +872,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_GIT_CLONE_REPOSITORY,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<GitCloneRequestDto>) => ({
         url: req.body?.url,
@@ -913,7 +913,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_GIT_COMMIT_CHANGES,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<GitCommitRequestDto>) => ({
         path: req.body?.path,
@@ -974,7 +974,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_GIT_PULL_CHANGES,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<GitRepoRequestDto>) => ({
         path: req.body?.path,
@@ -1011,7 +1011,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_GIT_PUSH_CHANGES,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<GitRepoRequestDto>) => ({
         path: req.body?.path,
@@ -1048,7 +1048,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_GIT_CHECKOUT_BRANCH,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<GitCheckoutRequestDto>) => ({
         path: req.body?.path,
@@ -1103,7 +1103,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_EXECUTE_COMMAND,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<ExecuteRequestDto>) => ({
         command: req.body?.command,
@@ -1193,7 +1193,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_CREATE_SESSION,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       body: (req: TypedRequest<CreateSessionRequestDto>) => ({
         sessionId: req.body?.sessionId,
@@ -1235,7 +1235,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_SESSION_EXECUTE_COMMAND,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       params: (req) => ({
         sessionId: req.params.sessionId,
@@ -1271,7 +1271,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_DELETE_SESSION,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       params: (req) => ({
         sessionId: req.params.sessionId,
@@ -1655,7 +1655,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_COMPUTER_USE_START,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
   })
   async startComputerUse(
     @Request() req: RawBodyRequest<IncomingMessage>,
@@ -1683,7 +1683,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_COMPUTER_USE_STOP,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
   })
   async stopComputerUse(
     @Request() req: RawBodyRequest<IncomingMessage>,
@@ -1755,7 +1755,7 @@ export class ToolboxController {
   @Audit({
     action: AuditAction.TOOLBOX_COMPUTER_USE_RESTART_PROCESS,
     targetType: AuditTarget.SANDBOX,
-    targetIdFromRequest: (req) => req.params.sandboxId,
+    targetIdFromRequest: (req) => req.params.sandboxId as string,
     requestMetadata: {
       params: (req) => ({
         processName: req.params.processName,

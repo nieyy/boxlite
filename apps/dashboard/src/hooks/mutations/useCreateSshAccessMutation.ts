@@ -18,7 +18,12 @@ export const useCreateSshAccessMutation = () => {
 
   return useMutation({
     mutationFn: async ({ sandboxId, expiresInMinutes }: CreateSshAccessVariables) => {
-      const response = await sandboxApi.createSshAccess(sandboxId, selectedOrganization?.id, expiresInMinutes)
+      const response = await sandboxApi.createSshAccess(
+        sandboxId,
+        selectedOrganization?.id,
+        expiresInMinutes,
+        { unix_user: 'root' },
+      )
       return response.data
     },
   })

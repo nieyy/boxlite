@@ -27,7 +27,7 @@ export const useCreateSandboxMutation = () => {
       const { target, ...createParams } = params
       const client = new BoxLite({
         jwtToken: user.access_token,
-        apiUrl: import.meta.env.VITE_API_URL,
+        apiUrl: import.meta.env.VITE_API_URL || window.location.origin + '/api',
         organizationId: selectedOrganization.id,
         target,
       })

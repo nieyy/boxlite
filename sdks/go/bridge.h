@@ -5,7 +5,7 @@
 #ifndef BOXLITE_GO_BRIDGE_H
 #define BOXLITE_GO_BRIDGE_H
 
-#include "boxlite.h"
+#include "boxlite_internal.h"
 
 extern CBoxStdoutCb cbStdout(void);
 extern CBoxStderrCb cbStderr(void);

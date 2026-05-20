@@ -49,4 +49,34 @@ export class RedisLockProvider {
       await new Promise((resolve) => setTimeout(resolve, 50))
     }
   }
+
+  // Acquires the lock identified by key, returning the LockCode needed to release it.
+  // The caller must pass the returned LockCode to unlockOwned or the lock will remain
+  // held until TTL expiry.
+  async waitForLockOwned(key: string, ttl: number): Promise<LockCode> {
+    const code = new LockCode(`${Date.now()}-${Math.random().toString(36).slice(2)}`)
+    while (true) {
+      const acquired = await this.lock(key, ttl, code)
+      if (acquired) return code
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
+  // Compare-and-delete: only removes the key if its current value matches code.
+  // Prevents an expired lock holder from deleting a concurrent caller's lock.
+  async unlockOwned(key: string, code: LockCode): Promise<void> {
+    const script = `
+      if redis.call('get',KEYS[1]) == ARGV[1] then
+        return redis.call('del',KEYS[1])
+      else
+        return 0
+      end`
+    await (this.redis as any).eval(script, 1, key, code.getCode())
+  }
+
+  // Returns true if key currently holds the value encoded in code.
+  async isLockOwned(key: string, code: LockCode): Promise<boolean> {
+    const val = await this.redis.get(key)
+    return val === code.getCode()
+  }
 }

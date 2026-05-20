@@ -202,7 +202,7 @@ export const SandboxApiAxiosParamCreator = function (configuration?: Configurati
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        createSshAccess: async (sandboxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        createSshAccess: async (sandboxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, createSshAccessBodyDto?: { unix_user?: string }, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
             // verify required parameter 'sandboxIdOrName' is not null or undefined
             assertParamExists('createSshAccess', 'sandboxIdOrName', sandboxIdOrName)
             const localVarPath = `/sandbox/{sandboxIdOrName}/ssh-access`
@@ -233,9 +233,11 @@ export const SandboxApiAxiosParamCreator = function (configuration?: Configurati
             if (xBoxLiteOrganizationID != null) {
                 localVarHeaderParameter['X-BoxLite-Organization-ID'] = String(xBoxLiteOrganizationID);
             }
+            localVarHeaderParameter['Content-Type'] = 'application/json';
             setSearchParams(localVarUrlObj, localVarQueryParameter);
             let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
             localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = createSshAccessBodyDto ?? {};
 
             return {
                 url: toPathString(localVarUrlObj),
@@ -1819,8 +1821,8 @@ export const SandboxApiFp = function(configuration?: Configuration) {
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async createSshAccess(sandboxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<SshAccessDto>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.createSshAccess(sandboxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, options);
+        async createSshAccess(sandboxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, createSshAccessBodyDto?: { unix_user?: string }, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<SshAccessDto>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.createSshAccess(sandboxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, createSshAccessBodyDto, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['SandboxApi.createSshAccess']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
@@ -2321,8 +2323,8 @@ export const SandboxApiFactory = function (configuration?: Configuration, basePa
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        createSshAccess(sandboxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, options?: RawAxiosRequestConfig): AxiosPromise<SshAccessDto> {
-            return localVarFp.createSshAccess(sandboxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, options).then((request) => request(axios, basePath));
+        createSshAccess(sandboxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, createSshAccessBodyDto?: { unix_user?: string }, options?: RawAxiosRequestConfig): AxiosPromise<SshAccessDto> {
+            return localVarFp.createSshAccess(sandboxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, createSshAccessBodyDto, options).then((request) => request(axios, basePath));
         },
         /**
          *
@@ -2743,8 +2745,8 @@ export class SandboxApi extends BaseAPI {
      * @throws {RequiredError}
      * @memberof SandboxApi
      */
-    public createSshAccess(sandboxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, options?: RawAxiosRequestConfig) {
-        return SandboxApiFp(this.configuration).createSshAccess(sandboxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, options).then((request) => request(this.axios, this.basePath));
+    public createSshAccess(sandboxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, createSshAccessBodyDto?: { unix_user?: string }, options?: RawAxiosRequestConfig) {
+        return SandboxApiFp(this.configuration).createSshAccess(sandboxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, createSshAccessBodyDto, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**

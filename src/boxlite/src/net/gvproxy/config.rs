@@ -50,6 +50,12 @@ pub struct GvproxyConfig {
     /// Caller-provided to ensure each box gets a unique, collision-free path.
     pub socket_path: PathBuf,
 
+    /// Unix socket path for the gvproxy HTTP admin interface.
+    /// Used by the runner to expose/unexpose port forwards (e.g. for SSH access).
+    /// Derived from `socket_path` at construction time; stored explicitly so Go
+    /// can receive it via JSON rather than re-deriving it from `socket_path`.
+    pub admin_sock_path: PathBuf,
+
     /// Virtual network subnet (e.g., "192.168.127.0/24")
     pub subnet: String,
 
@@ -176,8 +182,10 @@ impl From<&crate::runtime::options::Secret> for GvproxySecretConfig {
 fn defaults_with_socket_path(socket_path: PathBuf) -> GvproxyConfig {
     use crate::net::constants::*;
 
+    let admin_sock_path = socket_path.with_file_name("gvproxy-admin.sock");
     GvproxyConfig {
         socket_path,
+        admin_sock_path,
         subnet: SUBNET.to_string(),
         gateway_ip: GATEWAY_IP.to_string(),
         gateway_mac: GATEWAY_MAC_STRING.to_string(),

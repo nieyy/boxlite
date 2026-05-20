@@ -332,6 +332,14 @@ enum BoxliteErrorCode boxlite_start_box(CBoxHandle *handle,
 
 char *boxlite_box_id(CBoxHandle *handle);
 
+// Returns the path to the gvproxy HTTP admin Unix socket for this box.
+//
+// The path follows the layout: `<home_dir>/boxes/<box_id>/sockets/gvproxy-admin.sock`
+//
+// The caller must free the returned string with `boxlite_free_string`.
+// Returns NULL if handle is NULL or home_dir is not set (e.g. REST runtime).
+char *boxlite_box_admin_sock_path(CBoxHandle *handle);
+
 void boxlite_box_free(CBoxHandle *handle);
 
 enum BoxliteErrorCode boxlite_copy_into(CBoxHandle *handle,

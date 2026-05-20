@@ -264,6 +264,7 @@ pub unsafe extern "C" fn boxlite_rest_runtime_new_with_options(
             tokio_rt,
             liveness: Arc::new(RuntimeLiveness::new()),
             queue: Arc::new(EventQueue::new()),
+            home_dir: std::path::PathBuf::new(),
         }));
         BoxliteErrorCode::Ok
     }

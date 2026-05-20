@@ -95,7 +95,7 @@ export function useSandboxSession(options?: UseSandboxSessionOptions): UseSandbo
     if (!user?.access_token || !selectedOrganization?.id) return null
     return new BoxLite({
       jwtToken: user.access_token,
-      apiUrl: import.meta.env.VITE_API_URL,
+      apiUrl: import.meta.env.VITE_API_URL || window.location.origin + '/api',
       organizationId: selectedOrganization.id,
     })
   }, [user?.access_token, selectedOrganization?.id])

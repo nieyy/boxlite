@@ -6,7 +6,7 @@
 
 import { ForbiddenException, Injectable, Logger, NotFoundException, ConflictException } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
-import { Not, Repository, LessThan, In, JsonContains, FindOptionsWhere, ILike } from 'typeorm'
+import { Not, IsNull, Repository, LessThan, In, JsonContains, FindOptionsWhere, ILike } from 'typeorm'
 import { Sandbox } from '../entities/sandbox.entity'
 import { CreateSandboxDto } from '../dto/create-sandbox.dto'
 import { ResizeSandboxDto } from '../dto/resize-sandbox.dto'
@@ -2101,42 +2101,246 @@ export class SandboxService {
     return volumes
   }
 
+  private sshLockKey(sandboxId: string): string {
+    return `sandbox:${sandboxId}:ssh-access`
+  }
+
   async createSshAccess(
     sandboxIdOrName: string,
     expiresInMinutes = 60,
     organizationId?: string,
+    _authorizedKeys: string[] = [],
+    // null = legacy exec-bridge token (no unix_user enforcement, works for all runners).
+    // string = real-SSH token: must have a v1 runner; v2 runners reject with 400.
+    unixUser: string | null = null,
   ): Promise<SshAccessDto> {
-    //  check if sandbox exists
     const sandbox = await this.findOneByIdOrName(sandboxIdOrName, organizationId)
+    const lockKey = this.sshLockKey(sandbox.id)
 
-    // Revoke any existing SSH access for this sandbox
-    await this.revokeSshAccess(sandbox.id)
+    const lockToken = await this.redisLockProvider.waitForLockOwned(lockKey, 90)
+    try {
+      const priorTokens = await this.sshAccessRepository.find({ where: { sandboxId: sandbox.id } })
+      const hadPriorActiveSshAccess = priorTokens.length > 0
+      const priorUnixUserSet = new Set<string | null>(priorTokens.map((t) => t.unixUser))
 
-    const sshAccess = new SshAccess()
-    sshAccess.sandboxId = sandbox.id
-    // Generate a safe token that can't doesn't have _ or - to avoid CLI issues
-    sshAccess.token = customNanoid(urlAlphabet.replace('_', '').replace('-', ''))(32)
-    sshAccess.expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000)
+      let runnerSSHEnabled = false
+      let resolvedUnixUser: string | null = null
+      let runnerAdapterForRollback: { disableSSHAccess(id: string): Promise<void> } | null = null
 
-    await this.sshAccessRepository.save(sshAccess)
+      // True when at least one prior active token was a real-SSH token (non-null
+      // unix_user). Used to detect the real-SSH → legacy rotation case so that
+      // runner SSH state can be torn down when switching to a null unixUser token.
+      const hadPriorRealSSHTokens = priorTokens.some((t) => t.unixUser !== null)
+      let legacyDisableAdapter: { disableSSHAccess(id: string): Promise<void> } | null = null
 
-    const region = await this.regionService.findOne(sandbox.region, true)
-    if (region && region.sshGatewayUrl) {
-      return SshAccessDto.fromSshAccess(sshAccess, region.sshGatewayUrl)
+      if (unixUser !== null) {
+        // Real-SSH requested: requires a runner that can enforce unix_user identity.
+        if (!sandbox.runnerId) {
+          throw new BadRequestError('Real-SSH access (unix_user) requires a runner; sandbox has none attached')
+        }
+        const runner = await this.runnerService.findOne(sandbox.runnerId)
+        if (!runner) {
+          throw new BadRequestError('Real-SSH access (unix_user) requires a reachable runner; runner not found')
+        }
+        const adapter = await this.runnerAdapterFactory.create(runner)
+        try {
+          await adapter.enableSSHAccess(sandbox.id, unixUser)
+          runnerSSHEnabled = true
+        } catch (enableErr) {
+          // enableSSHAccess threw (including timeout). The runner may have partially
+          // succeeded and actually enabled SSH before the timeout fired. Attempt a
+          // best-effort disable so the runner does not retain orphaned SSH state —
+          // BUT only when there are no prior real-SSH tokens. If prior real-SSH tokens
+          // exist, the runner SSH state belongs to those tokens; tearing it down would
+          // break current SSH access for users whose old tokens are still valid in the DB.
+          if (!hadPriorRealSSHTokens) {
+            try {
+              await adapter.disableSSHAccess(sandbox.id)
+            } catch (disableErr) {
+              this.logger.warn('Best-effort disable after enableSSHAccess failure also failed', disableErr)
+            }
+          }
+          throw enableErr
+        }
+        resolvedUnixUser = unixUser
+        runnerAdapterForRollback = adapter
+      } else if (hadPriorRealSSHTokens && sandbox.runnerId) {
+        // Legacy (null) token requested while prior real-SSH tokens exist.
+        // Fetch the runner adapter now so disableSSHAccess can be called after the
+        // old tokens are deleted.
+        const runner = await this.runnerService.findOne(sandbox.runnerId)
+        if (runner) {
+          legacyDisableAdapter = await this.runnerAdapterFactory.create(runner)
+        }
+      }
+      // unixUser === null: legacy exec-bridge token — no runner-side SSH setup.
+
+      // unixUserChanged=true when any prior token was for a different user than what
+      // we just configured — covers multi-token scenarios left by failed rotations.
+      const unixUserChanged = priorTokens.some((t) => t.unixUser !== resolvedUnixUser)
+
+      // Fencing: did a concurrent revoke expire our lock while enableSSHAccess ran?
+      if (!(await this.redisLockProvider.isLockOwned(lockKey, lockToken))) {
+        // Do NOT disable SSH: a concurrent Create-B may have reconfigured the runner.
+        throw new Error('SSH access revoked during creation')
+      }
+
+      const sshAccess = new SshAccess()
+      sshAccess.sandboxId = sandbox.id
+      sshAccess.token = customNanoid(urlAlphabet.replace('_', '').replace('-', ''))(32)
+      sshAccess.expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000)
+      sshAccess.unixUser = resolvedUnixUser
+
+      try {
+        await this.sshAccessRepository.save(sshAccess)
+      } catch (saveError) {
+        // Rollback runner SSH when: runner was enabled AND (no prior tokens, or user changed).
+        // Same-user rotation: leave enabled so old tokens remain valid.
+        if (runnerSSHEnabled && runnerAdapterForRollback && (!hadPriorActiveSshAccess || unixUserChanged)) {
+          try {
+            await runnerAdapterForRollback.disableSSHAccess(sandbox.id)
+          } catch (disableErr) {
+            this.logger.error('Failed to disable runner SSH after DB save failure', disableErr)
+          }
+        }
+        throw saveError
+      }
+
+      // Second fencing check: did our lock expire while the DB save was in-flight?
+      // A concurrent Create-B may have already saved its own token; deleting "all other
+      // tokens" would remove Create-B's valid token and leave the user locked out.
+      if (!(await this.redisLockProvider.isLockOwned(lockKey, lockToken))) {
+        // Our token was durably saved before the lock was lost — return it so the
+        // caller has a valid credential; skip the delete to protect Create-B's token.
+        const region = await this.regionService.findOne(sandbox.region, true)
+        if (region && region.sshGatewayUrl) {
+          return SshAccessDto.fromSshAccess(sshAccess, region.sshGatewayUrl)
+        }
+        return SshAccessDto.fromSshAccess(sshAccess, this.configService.getOrThrow('sshGateway.url'))
+      }
+
+      // Delete old tokens only after the new token is durably saved.
+      try {
+        await this.sshAccessRepository.delete({ sandboxId: sandbox.id, id: Not(sshAccess.id) })
+      } catch (deleteErr) {
+        // If delete fails and unix_user changed, old tokens remain valid for the wrong
+        // user account — disable SSH to prevent wrong-user access.
+        if (runnerSSHEnabled && runnerAdapterForRollback && unixUserChanged) {
+          try {
+            await runnerAdapterForRollback.disableSSHAccess(sandbox.id)
+          } catch (disableErr) {
+            this.logger.error('Failed to disable runner SSH after token delete failure', disableErr)
+          }
+        }
+        // Legacy token path: if delete failed, prior real-SSH tokens still exist.
+        // Disable runner SSH so the stale port-forward does not remain exposed
+        // even though no DB token now authorizes real-SSH access via those old tokens.
+        if (legacyDisableAdapter) {
+          try {
+            await legacyDisableAdapter.disableSSHAccess(sandbox.id)
+          } catch (disableErr) {
+            this.logger.error('Failed to disable runner SSH after legacy-token delete failure', disableErr)
+          }
+        }
+        throw deleteErr
+      }
+
+      // Legacy (null) token path: tear down runner real-SSH state now that the old
+      // real-SSH tokens have been deleted. The DB no longer authorizes real-SSH access;
+      // the runner must not keep sshd and the gvproxy port-forward active.
+      if (legacyDisableAdapter) {
+        try {
+          await legacyDisableAdapter.disableSSHAccess(sandbox.id)
+        } catch (disableErr) {
+          // Log but do not fail the request: the new legacy token is already saved and
+          // the old real-SSH tokens are deleted. The stale runner state is a degraded
+          // condition (port still exposed, no DB token for it) but does not affect the
+          // caller's ability to use the new token. The next revoke or validate call will
+          // reconcile the runner state.
+          this.logger.error('Failed to disable runner SSH when rotating to legacy token; runner state may be stale', disableErr)
+        }
+      }
+
+      const region = await this.regionService.findOne(sandbox.region, true)
+      if (region && region.sshGatewayUrl) {
+        return SshAccessDto.fromSshAccess(sshAccess, region.sshGatewayUrl)
+      }
+      return SshAccessDto.fromSshAccess(sshAccess, this.configService.getOrThrow('sshGateway.url'))
+    } finally {
+      await this.redisLockProvider.unlockOwned(lockKey, lockToken)
     }
-
-    return SshAccessDto.fromSshAccess(sshAccess, this.configService.getOrThrow('sshGateway.url'))
   }
 
   async revokeSshAccess(sandboxIdOrName: string, token?: string, organizationId?: string): Promise<Sandbox> {
     const sandbox = await this.findOneByIdOrName(sandboxIdOrName, organizationId)
+    const lockKey = this.sshLockKey(sandbox.id)
 
-    if (token) {
-      // Revoke specific SSH access by token
-      await this.sshAccessRepository.delete({ sandboxId: sandbox.id, token })
-    } else {
-      // Revoke all SSH access for the sandbox
-      await this.sshAccessRepository.delete({ sandboxId: sandbox.id })
+    const lockToken = await this.redisLockProvider.waitForLockOwned(lockKey, 90)
+    try {
+      // Determine whether the token(s) being revoked have runner-side SSH state.
+      // Legacy tokens (unixUser=null) authorize only the exec-bridge path and have
+      // no runner-side sshd state — they must be revocable even when the runner is
+      // unreachable.  Real-SSH tokens (unixUser≠null) DO have runner-side state:
+      // the sshd process and port forward.  When the last real-SSH token is revoked,
+      // disableSSHAccess is a hard prerequisite (fail-closed).  When only legacy
+      // tokens are involved, disableSSHAccess is best-effort cleanup for any stale
+      // runner state left by prior failed rotations.
+      let revokedIsRealSsh: boolean
+      if (token) {
+        const revokedRow = await this.sshAccessRepository.findOne({
+          where: { sandboxId: sandbox.id, token },
+          select: ['id', 'unixUser'],
+        })
+        revokedIsRealSsh = revokedRow?.unixUser !== null && revokedRow?.unixUser !== undefined
+      } else {
+        // All-tokens revoke: real-SSH if any token for this sandbox has a unixUser.
+        const realSshCount = await this.sshAccessRepository.count({
+          where: { sandboxId: sandbox.id, unixUser: Not(IsNull()) },
+        })
+        revokedIsRealSsh = realSshCount > 0
+      }
+
+      // Count how many other real-SSH tokens remain after this revocation.
+      // hadRealSshTokens is NOT checked intentionally: a prior failed rotation may
+      // have deleted the real-SSH DB row while leaving runner SSH active.  If the
+      // only remaining token is legacy (unixUser=null), remainingRealSsh===0 is the
+      // correct gate — disableSSHAccess is idempotent.
+      const remainingRealSsh = token
+        ? await this.sshAccessRepository.count({
+            where: { sandboxId: sandbox.id, unixUser: Not(IsNull()), token: Not(token) },
+          })
+        : 0
+
+      // Fencing: only disable runner SSH if the lock is still ours. A concurrent
+      // createSshAccess may have re-acquired the lock and re-enabled runner SSH —
+      // tearing it down would leave a valid DB token with no runner SSH backing it.
+      if (remainingRealSsh === 0 && sandbox.runnerId && (await this.redisLockProvider.isLockOwned(lockKey, lockToken))) {
+        const runner = await this.runnerService.findOne(sandbox.runnerId)
+        if (runner) {
+          const adapter = await this.runnerAdapterFactory.create(runner)
+          if (revokedIsRealSsh) {
+            // Hard prerequisite: propagate errors so the DB delete is skipped and
+            // the caller gets a clear failure. A swallowed error here would produce
+            // a false revocation: DB token gone but runner SSH still active.
+            await adapter.disableSSHAccess(sandbox.id)
+          } else {
+            // Best-effort cleanup: stale runner SSH from a prior failed rotation.
+            // Legacy token revocation must succeed even when the runner is unreachable.
+            adapter.disableSSHAccess(sandbox.id).catch((e: unknown) => {
+              this.logger.warn(`[revokeSshAccess] best-effort disable for sandbox ${sandbox.id} failed: ${e}`)
+            })
+          }
+        }
+      }
+
+      // Runner is disabled (or not applicable). Now delete the DB token(s).
+      if (token) {
+        await this.sshAccessRepository.delete({ sandboxId: sandbox.id, token })
+      } else {
+        await this.sshAccessRepository.delete({ sandboxId: sandbox.id })
+      }
+    } finally {
+      await this.redisLockProvider.unlockOwned(lockKey, lockToken)
     }
 
     return sandbox
@@ -2144,35 +2348,99 @@ export class SandboxService {
 
   async validateSshAccess(token: string): Promise<SshAccessValidationDto> {
     const sshAccess = await this.sshAccessRepository.findOne({
-      where: {
-        token,
-      },
+      where: { token },
       relations: ['sandbox'],
     })
 
     if (!sshAccess) {
-      return { valid: false, sandboxId: null }
+      return { valid: false, sandboxId: '', unixUser: null }
     }
 
-    // Check if token is expired
     const isExpired = sshAccess.expiresAt < new Date()
-    if (isExpired) {
-      return { valid: false, sandboxId: null }
+    if (!isExpired) {
+      if (!sshAccess.sandbox) {
+        // Sandbox was deleted concurrently between token issuance and this validation call.
+        // The token is technically unexpired but there is nothing to route to — treat as invalid.
+        return { valid: false, sandboxId: '', unixUser: null }
+      }
+      return { valid: true, sandboxId: sshAccess.sandbox.id, unixUser: sshAccess.unixUser }
     }
 
-    // Get runner information if sandbox exists
+    // Token is expired. Clean up runner SSH under the per-sandbox lock so we don't
+    // race a concurrent createSshAccess that is between enableSSHAccess and DB save.
     if (sshAccess.sandbox && sshAccess.sandbox.runnerId) {
-      const runner = await this.runnerService.findOne(sshAccess.sandbox.runnerId)
-
-      if (runner) {
-        return {
-          valid: true,
-          sandboxId: sshAccess.sandbox.id,
+      try {
+        const lockKey = this.sshLockKey(sshAccess.sandbox.id)
+        const lockToken = await this.redisLockProvider.waitForLockOwned(lockKey, 90)
+        try {
+          // Best-effort only: the DB row is deleted before runner cleanup to prevent
+          // re-use of the expired token. If disableSSHAccess subsequently fails, the
+          // row is already gone and there is no retry path — a durable pending-state
+          // record would be required to recover. This is acceptable for background
+          // expiry cleanup (the session expires naturally); explicit revoke uses the
+          // stricter disable-before-delete ordering in revokeSshAccess instead.
+          //
+          // Delete the expired row first so the remaining-count reflects reality.
+          // Computing count before the delete would include the expiring row itself,
+          // making count===0 unreachable for the last-token case.
+          await this.sshAccessRepository.delete({ id: sshAccess.id })
+          // Count only real-SSH rows (unixUser IS NOT NULL). Legacy tokens
+          // (unixUser=null) don't authorize runner-side SSH and must not prevent
+          // disableSSHAccess from being called when no real-SSH token remains.
+          const remainingCount = await this.sshAccessRepository.count({
+            where: { sandboxId: sshAccess.sandbox.id, unixUser: Not(IsNull()) },
+          })
+          // Fencing: check lock ownership before disabling runner SSH.
+          // A slow cleanup can lose the lock to a concurrent createSshAccess that
+          // re-enables SSH and saves a new token — disabling here would leave a
+          // valid DB token with no runner SSH backing it.
+          //
+          // sshAccess.unixUser !== null is NOT checked here intentionally. A prior
+          // failed rotation may have left runner SSH active even though the only
+          // remaining (now expiring) token is a legacy one (unixUser=null). The
+          // count already filters to real-SSH rows only, so remainingCount===0 is
+          // the correct and sufficient gate. disableSSHAccess is idempotent.
+          if (remainingCount === 0 && (await this.redisLockProvider.isLockOwned(lockKey, lockToken))) {
+            const runner = await this.runnerService.findOne(sshAccess.sandbox.runnerId)
+            if (runner) {
+              const adapter = await this.runnerAdapterFactory.create(runner)
+              try {
+                await adapter.disableSSHAccess(sshAccess.sandbox.id)
+              } catch (disableErr) {
+                // Best-effort: log and continue. A 503 means the runner's SSH port
+                // allocator is misconfigured (not a safe no-op); we log the degraded
+                // state but do not propagate the error — the expired token is already
+                // deleted and cannot be used for new SSH sessions.
+                this.logger.warn('Failed to disable runner SSH on token expiry (best-effort)', disableErr)
+              }
+            }
+          }
+        } finally {
+          await this.redisLockProvider.unlockOwned(lockKey, lockToken)
         }
+      } catch (err) {
+        this.logger.error('Failed to clean up runner SSH on token expiry', err)
+      }
+    } else if (sshAccess.sandbox) {
+      // Runner-less sandbox (exec-bridge token, unixUser=null): no runner SSH to disable,
+      // but the expired row still needs to be removed to prevent unbounded DB growth.
+      try {
+        await this.sshAccessRepository.delete({ id: sshAccess.id })
+      } catch (err) {
+        this.logger.error('Failed to delete expired SSH token for runner-less sandbox', err)
+      }
+    } else {
+      // Sandbox relation is null — sandbox was concurrently deleted. No runner SSH to
+      // disable, but the orphaned SSH-access row must still be removed to prevent
+      // unbounded DB growth.
+      try {
+        await this.sshAccessRepository.delete({ id: sshAccess.id })
+      } catch (err) {
+        this.logger.error('Failed to delete expired SSH token for deleted sandbox', err)
       }
     }
 
-    return { valid: true, sandboxId: sshAccess.sandbox.id }
+    return { valid: false, sandboxId: '', unixUser: null }
   }
 
   async updateSandboxBackupState(

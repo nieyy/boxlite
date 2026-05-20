@@ -1,0 +1,42 @@
+#!/bin/sh
+# Usage: boxlite-ensure-ssh
+# Ensures sshd is running on port 22222; restarts if not.
+# Called by the Runner after a box restart to confirm guest readiness.
+set -e
+
+SSHD_BIN="/usr/local/sbin/boxlite-sshd"
+SSHD_CONFIG="/etc/ssh/sshd_config_boxlite"
+PID_FILE="/tmp/boxlite-sshd.pid"
+
+# Already running
+if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    exit 0
+fi
+
+# Not running — check that SSH was previously enabled (marker + config present)
+if [ ! -f "$SSHD_CONFIG" ]; then
+    printf 'sshd_config_boxlite not found — SSH not configured\n' >&2
+    exit 1
+fi
+
+SSH_ENABLED=$(find /home /root -name ".ssh_enabled" 2>/dev/null | head -1)
+if [ -z "$SSH_ENABLED" ]; then
+    printf 'No .ssh_enabled marker found — SSH not configured\n' >&2
+    exit 1
+fi
+
+# Restart using existing config
+rm -f "$PID_FILE"
+"$SSHD_BIN" -f "$SSHD_CONFIG" -o "PidFile=$PID_FILE"
+
+i=0
+while [ $i -lt 5 ]; do
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        exit 0
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+
+printf 'boxlite-sshd failed to restart\n' >&2
+exit 1

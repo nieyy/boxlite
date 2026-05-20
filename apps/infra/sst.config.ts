@@ -108,7 +108,7 @@ export default $config({
       home: "aws",
       providers: {
         aws: { region: REGION, profile: envOr("AWS_PROFILE", "default") },
-        cloudflare: "6.14.0",
+        cloudflare: "6.15.0",
         random: "4.16.6",
       },
     };
@@ -407,10 +407,11 @@ export default $config({
       image: { context: "../..", dockerfile: "apps/ssh-gateway/Dockerfile", cache: false },
       loadBalancer: { rules: [{ listen: `${PORTS.SSH_GATEWAY}/tcp`, forward: `${PORTS.SSH_GATEWAY}/tcp` }] },
       environment: {
-        API_URL: api.url,
+        API_URL: $interpolate`${stripTrailingSlash(api.url)}/api`,
         API_KEY: envOr("SSH_GATEWAY_API_KEY", sshGatewayApiKey.result), // NB: not SSH_GATEWAY_API_KEY
         SSH_PRIVATE_KEY: envOr("SSH_PRIVATE_KEY_B64", ""),
         SSH_HOST_KEY: envOr("SSH_HOST_KEY_B64", ""),
+        RUNNER_API_TOKEN: envOr("RUNNER_API_TOKEN", defaultRunnerApiKey.result),
       },
     });
 
@@ -564,7 +565,12 @@ export default $config({
     const runnerInstanceProfile = new aws.iam.InstanceProfile("RunnerProfile", { role: runnerRole.name });
 
     const runnerUserData = $resolve([api.url, defaultRunnerApiKey.result, registry.url]).apply(
-      ([apiUrl, token, registryUrl]) => buildRunnerUserData({ apiUrl, token, registryUrl }),
+      ([apiUrl, token, registryUrl]) => buildRunnerUserData({
+        apiUrl,
+        token,
+        registryUrl,
+        sshGatewayPublicKey: deriveGatewayPublicKey(),
+      }),
     );
 
     // Runner holds load-bearing sandbox state (/var/lib/boxlite + in-memory
@@ -581,6 +587,29 @@ export default $config({
     //   `pulumi destroy` or stack-wide teardown. Deliberate decommission
     //   requires editing this file to `protect: false`, deploying that
     //   change, then `pulumi destroy --target ...Runner`.
+    // Allow SSH Gateway ECS tasks to reach VM SSH ports on the Runner EC2.
+    // Ports 22100–22199 are the gvproxy-forwarded host ports for real-SSH
+    // sessions; each sandbox gets one port from this pool when SSH is enabled.
+    //
+    // Security boundary: SST v3 ECS tasks (SshGateway and all other services in
+    // the cluster) run with the VPC default security group. By using
+    // referencedSecurityGroupId (source SG) instead of cidrIpv4 (VPC CIDR),
+    // only VPC-default-SG members (ECS gateway tasks) can reach VM SSH ports;
+    // not open to the full VPC CIDR. Any other VPC workload using a custom SG
+    // (e.g., a compromised Lambda or RDS instance) is excluded.
+    const defaultVpcSg = aws.ec2.getSecurityGroupOutput({
+      vpcId: vpc.nodes.vpc.id,
+      name: "default",
+    });
+    new aws.ec2.SecurityGroupRule("RunnerSshPortIngress", {
+      type: "ingress",
+      securityGroupId: defaultVpcSg.id,
+      fromPort: 22100,
+      toPort: 22199,
+      protocol: "tcp",
+      self: true,
+      description: "VM SSH port range 22100-22199 SSH Gateway to Runner EC2 default-SG members only",
+    });
     new aws.ec2.Instance("Runner", {
       ami: ubuntuAmi.then((a) => a.id),
       instanceType: RUNNER.instanceType,
@@ -601,10 +630,34 @@ export default $config({
 // ── runner bootstrap ─────────────────────────────────────────────────────────
 // EC2 user-data: downloads prebuilt runner binary from GitHub Releases
 // and runs it directly with BoxLite VM isolation.
+
+// Derive the SSH gateway public key from the private key if not provided explicitly,
+// so operators only need to supply SSH_PRIVATE_KEY_B64 (which they already have).
+function deriveGatewayPublicKey(): string {
+  const explicit = process.env.SSH_GATEWAY_PUBLIC_KEY;
+  if (explicit) return explicit;
+  const privB64 = process.env.SSH_PRIVATE_KEY_B64;
+  if (!privB64) return "";
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { execSync } = require("child_process") as typeof import("child_process");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { writeFileSync, unlinkSync } = require("fs") as typeof import("fs");
+  const tmp = `/tmp/sst-ssh-gw-${process.pid}`;
+  try {
+    writeFileSync(tmp, Buffer.from(privB64, "base64").toString("utf8"), { mode: 0o600 });
+    return execSync(`ssh-keygen -y -f ${tmp}`, { encoding: "utf8" }).trim();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`SSH_GATEWAY_PUBLIC_KEY cannot be derived from SSH_PRIVATE_KEY_B64: ${reason}`);
+  } finally {
+    try { unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+  }
+}
 async function buildRunnerUserData(input: {
   apiUrl: string;
   token: string;
   registryUrl: string;
+  sshGatewayPublicKey: string;
 }): Promise<string> {
   const { readFileSync } = await import("fs");
   const { resolve } = await import("path");
@@ -656,6 +709,7 @@ RestartSec=5
 TimeoutStopSec=60
 Environment=BOXLITE_API_URL=${input.apiUrl.replace(/\/$/, "")}/api
 Environment=BOXLITE_RUNNER_TOKEN=${input.token}
+Environment=SSH_GATEWAY_PUBLIC_KEY="${input.sshGatewayPublicKey}"
 Environment=API_VERSION=2
 Environment=API_PORT=${PORTS.RUNNER}
 Environment=RUNNER_DOMAIN=\$HOST_IP

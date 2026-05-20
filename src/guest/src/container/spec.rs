@@ -576,6 +576,61 @@ fn build_standard_mounts(bundle_path: &Path) -> BoxliteResult<Vec<Mount>> {
         );
     }
 
+    // Bind-mount SSH infrastructure binaries and management scripts from the
+    // guest rootfs into the container (read-only). These files are injected
+    // into the guest ext4 at build time (see guest.rs::build_and_install) and
+    // are NOT part of the user's container image. They must be visible inside
+    // the container so that the runner can call boxlite-enable-ssh via Exec.
+    //
+    // Only added when the sshd binary is present — a guest built without SSH
+    // support omits /boxlite/bin/sshd, so the mounts are skipped entirely to
+    // avoid container startup failures on non-SSH-capable guests.
+    let ssh_bind_mounts: &[(&str, &str)] = &[
+        ("/boxlite/bin/sshd", "/usr/local/sbin/boxlite-sshd"),
+        (
+            "/boxlite/bin/ssh-keygen",
+            "/usr/local/bin/boxlite-ssh-keygen",
+        ),
+        (
+            "/usr/local/bin/boxlite-enable-ssh",
+            "/usr/local/bin/boxlite-enable-ssh",
+        ),
+        (
+            "/usr/local/bin/boxlite-disable-ssh",
+            "/usr/local/bin/boxlite-disable-ssh",
+        ),
+        (
+            "/usr/local/bin/boxlite-ensure-ssh",
+            "/usr/local/bin/boxlite-ensure-ssh",
+        ),
+    ];
+    if std::path::Path::new("/boxlite/bin/sshd").exists() {
+        for (source, dest) in ssh_bind_mounts {
+            if !std::path::Path::new(source).exists() {
+                tracing::warn!(source, dest, "SSH infra file missing, skipping bind mount");
+                continue;
+            }
+            mounts.push(
+                MountBuilder::default()
+                    .destination(*dest)
+                    .typ("bind")
+                    .source(*source)
+                    .options(vec![
+                        "bind".to_string(),
+                        "ro".to_string(),
+                        "nosuid".to_string(),
+                    ])
+                    .build()
+                    .map_err(|e| {
+                        BoxliteError::Internal(format!(
+                            "Failed to build SSH infra mount {} -> {}: {}",
+                            source, dest, e
+                        ))
+                    })?,
+            );
+        }
+    }
+
     Ok(mounts)
 }
 

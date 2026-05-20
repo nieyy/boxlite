@@ -221,6 +221,7 @@ fn test_runtime_images_unsupported_on_rest_runtime() {
         tokio_rt,
         liveness: Arc::new(crate::runtime::RuntimeLiveness::new()),
         queue: Arc::new(crate::event_queue::EventQueue::new()),
+        home_dir: std::path::PathBuf::new(),
     };
     let mut image_handle: *mut crate::images::ImageHandle = ptr::null_mut();
     let mut error = FFIError::default();

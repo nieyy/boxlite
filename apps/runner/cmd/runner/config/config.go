@@ -64,11 +64,21 @@ type Config struct {
 	BuildEngine                        string        `envconfig:"BUILD_ENGINE" default:"buildkit" validate:"oneof=buildkit legacy"`
 	BoxliteHomeDir                     string        `envconfig:"BOXLITE_HOME_DIR"`
 	InsecureRegistries                 string        `envconfig:"INSECURE_REGISTRIES"`
+	// SSH access configuration
+	SSHGatewayPublicKey                string        `envconfig:"SSH_GATEWAY_PUBLIC_KEY"`
+	SSHPortBase                        int           `envconfig:"SSH_PORT_BASE" default:"22100"`
+	SSHPortPoolSize                    int           `envconfig:"SSH_PORT_POOL_SIZE" default:"100"`
 }
 
 var DEFAULT_API_PORT int = 8080
 
 var config *Config
+
+// ResetForTest clears the cached config singleton so that tests can set
+// environment variables and call GetConfig again with a clean slate.
+func ResetForTest() {
+	config = nil
+}
 
 func GetConfig() (*Config, error) {
 	if config != nil {
