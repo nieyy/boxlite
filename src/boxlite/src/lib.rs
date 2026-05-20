@@ -32,7 +32,7 @@ mod volumes;
 
 pub use litebox::LiteBox;
 pub use portal::GuestSession;
-pub use runtime::{BoxliteRuntime, ImageHandle};
+pub use runtime::{AuthHandle, BoxliteRuntime, ImageHandle, Principal};
 
 pub use boxlite_shared::errors::{BoxliteError, BoxliteResult};
 pub use disk::DiskInfo;
