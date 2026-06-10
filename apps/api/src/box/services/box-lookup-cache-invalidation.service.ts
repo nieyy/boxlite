@@ -8,18 +8,22 @@ import { Injectable, Logger } from '@nestjs/common'
 import { DataSource } from 'typeorm'
 import {
   boxLookupCacheKeyByAuthToken,
+  boxLookupCacheKeyByBoxId,
   boxLookupCacheKeyById,
   boxLookupCacheKeyByName,
+  boxOrgIdCacheKeyByBoxId,
   boxOrgIdCacheKeyById,
   boxOrgIdCacheKeyByName,
 } from '../utils/box-lookup-cache.util'
 
 type InvalidateBoxLookupCacheArgs =
   | {
+      id: string
       boxId: string
       organizationId: string
       name: string
       previousOrganizationId?: string | null
+      previousBoxId?: string | null
       previousName?: string | null
     }
   | {
@@ -60,6 +64,9 @@ export class BoxLookupCacheInvalidationService {
     const names = Array.from(
       new Set([args.name, args.previousName].filter((n): n is string => Boolean(n && n.trim().length > 0))),
     )
+    const boxIds = Array.from(
+      new Set([args.boxId, args.previousBoxId].filter((id): id is string => Boolean(id && id.trim().length > 0))),
+    )
 
     const cacheIds: string[] = []
     for (const organizationId of organizationIds) {
@@ -68,9 +75,18 @@ export class BoxLookupCacheInvalidationService {
           boxLookupCacheKeyById({
             organizationId,
             returnDestroyed,
-            boxId: args.boxId,
+            boxId: args.id,
           }),
         )
+        for (const boxId of boxIds) {
+          cacheIds.push(
+            boxLookupCacheKeyByBoxId({
+              organizationId,
+              returnDestroyed,
+              boxId,
+            }),
+          )
+        }
         for (const boxName of names) {
           cacheIds.push(
             boxLookupCacheKeyByName({
@@ -98,10 +114,12 @@ export class BoxLookupCacheInvalidationService {
   }
 
   invalidateOrgId(args: {
+    id: string
     boxId: string
     organizationId: string
     name: string
     previousOrganizationId?: string | null
+    previousBoxId?: string | null
     previousName?: string | null
   }): void {
     const cache = this.dataSource.queryResultCache
@@ -119,15 +137,26 @@ export class BoxLookupCacheInvalidationService {
     const names = Array.from(
       new Set([args.name, args.previousName].filter((n): n is string => Boolean(n && n.trim().length > 0))),
     )
+    const boxIds = Array.from(
+      new Set([args.boxId, args.previousBoxId].filter((id): id is string => Boolean(id && id.trim().length > 0))),
+    )
 
     const cacheIds: string[] = []
     for (const organizationId of organizationIds) {
       cacheIds.push(
         boxOrgIdCacheKeyById({
           organizationId,
-          boxId: args.boxId,
+          boxId: args.id,
         }),
       )
+      for (const boxId of boxIds) {
+        cacheIds.push(
+          boxOrgIdCacheKeyByBoxId({
+            organizationId,
+            boxId,
+          }),
+        )
+      }
       for (const boxName of names) {
         cacheIds.push(
           boxOrgIdCacheKeyByName({
@@ -139,7 +168,10 @@ export class BoxLookupCacheInvalidationService {
     }
 
     // Also invalidate the "no org" variants (when organizationId was not provided to getOrganizationId)
-    cacheIds.push(boxOrgIdCacheKeyById({ boxId: args.boxId }))
+    cacheIds.push(boxOrgIdCacheKeyById({ boxId: args.id }))
+    for (const boxId of boxIds) {
+      cacheIds.push(boxOrgIdCacheKeyByBoxId({ boxId }))
+    }
     for (const boxName of names) {
       cacheIds.push(boxOrgIdCacheKeyByName({ boxName }))
     }

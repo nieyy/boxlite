@@ -19,7 +19,10 @@ export enum RoutePath {
   // Dashboard sub-routes
   KEYS = '/dashboard/keys',
   BOXES = '/dashboard/boxes',
-  SNAPSHOTS = '/dashboard/snapshots',
+  BILLING = '/dashboard/billing',
+  PRICING = '/dashboard/pricing',
+  ADMIN = '/dashboard/admin',
+  IMAGES = '/dashboard/images',
   REGISTRIES = '/dashboard/registries',
   VOLUMES = '/dashboard/volumes',
   LIMITS = '/dashboard/limits',
@@ -46,6 +49,12 @@ export enum RoutePath {
   BOX_DETAILS = '/dashboard/boxes/:boxId',
   BOX_TERMINAL = '/dashboard/boxes/:boxId/terminal',
   BOX_VNC = '/dashboard/boxes/:boxId/vnc',
+
+  // Legacy box routes
+  LEGACY_BOXES = '/dashboard/boxes',
+  LEGACY_BOX_DETAILS = '/dashboard/boxes/:boxId',
+  LEGACY_BOX_TERMINAL = '/dashboard/boxes/:boxId/terminal',
+  LEGACY_BOX_VNC = '/dashboard/boxes/:boxId/vnc',
 
   // Email verification
   EMAIL_VERIFY = '/dashboard/organization/:organizationId/verify-email/:email/:token',

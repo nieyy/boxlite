@@ -4,7 +4,6 @@
  */
 
 export const BOX_LOOKUP_CACHE_TTL_MS = 10_000
-export const BOX_BUILD_INFO_CACHE_TTL_MS = 60_000
 export const BOX_ORG_ID_CACHE_TTL_MS = 60_000
 export const TOOLBOX_PROXY_URL_CACHE_TTL_S = 30 * 60 // 30 minutes
 
@@ -17,6 +16,12 @@ export function boxLookupCacheKeyById(args: BoxLookupCacheKeyArgs & { boxId: str
   const organizationId = args.organizationId ?? 'none'
   const returnDestroyed = args.returnDestroyed ? 1 : 0
   return `box:lookup:by-id:org:${organizationId}:returnDestroyed:${returnDestroyed}:value:${args.boxId}`
+}
+
+export function boxLookupCacheKeyByBoxId(args: BoxLookupCacheKeyArgs & { boxId: string }): string {
+  const organizationId = args.organizationId ?? 'none'
+  const returnDestroyed = args.returnDestroyed ? 1 : 0
+  return `box:lookup:by-box-id:org:${organizationId}:returnDestroyed:${returnDestroyed}:value:${args.boxId}`
 }
 
 export function boxLookupCacheKeyByName(args: BoxLookupCacheKeyArgs & { boxName: string }): string {
@@ -36,6 +41,11 @@ type BoxOrgIdCacheKeyArgs = {
 export function boxOrgIdCacheKeyById(args: BoxOrgIdCacheKeyArgs & { boxId: string }): string {
   const organizationId = args.organizationId ?? 'none'
   return `box:orgId:by-id:org:${organizationId}:value:${args.boxId}`
+}
+
+export function boxOrgIdCacheKeyByBoxId(args: BoxOrgIdCacheKeyArgs & { boxId: string }): string {
+  const organizationId = args.organizationId ?? 'none'
+  return `box:orgId:by-box-id:org:${organizationId}:value:${args.boxId}`
 }
 
 export function boxOrgIdCacheKeyByName(args: BoxOrgIdCacheKeyArgs & { boxName: string }): string {

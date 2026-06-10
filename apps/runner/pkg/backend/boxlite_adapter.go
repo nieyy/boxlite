@@ -58,46 +58,6 @@ func (a *BoxliteAdapter) GetBoxState(ctx context.Context, boxId string) (enums.B
 	return a.client.GetBoxState(ctx, boxId)
 }
 
-func (a *BoxliteAdapter) PullSnapshot(ctx context.Context, req dto.PullSnapshotRequestDTO) error {
-	return a.client.PullSnapshot(ctx, req)
-}
-
-func (a *BoxliteAdapter) BuildSnapshot(ctx context.Context, req dto.BuildSnapshotRequestDTO) error {
-	return a.client.BuildSnapshot(ctx, req)
-}
-
-func (a *BoxliteAdapter) RemoveImage(ctx context.Context, imageName string, force bool) error {
-	return a.client.RemoveImage(ctx, imageName, force)
-}
-
-func (a *BoxliteAdapter) GetImageInfo(ctx context.Context, imageName string) (*ImageMeta, error) {
-	info, err := a.client.GetImageInfo(ctx, imageName)
-	if err != nil {
-		return nil, err
-	}
-	return &ImageMeta{
-		Size:       info.Size,
-		Entrypoint: info.Entrypoint,
-		Cmd:        info.Cmd,
-		Hash:       info.Hash,
-	}, nil
-}
-
-func (a *BoxliteAdapter) InspectImageInRegistry(ctx context.Context, imageName string, registry *dto.RegistryDTO) (*RegistryDigest, error) {
-	digest, err := a.client.InspectImageInRegistry(ctx, imageName, registry)
-	if err != nil {
-		return nil, err
-	}
-	return &RegistryDigest{
-		Digest: digest.Digest,
-		Size:   digest.Size,
-	}, nil
-}
-
-func (a *BoxliteAdapter) CreateBackup(ctx context.Context, boxId string, backupDto dto.CreateBackupDTO) error {
-	return a.client.CreateBackup(ctx, boxId, backupDto)
-}
-
 func (a *BoxliteAdapter) Ping(ctx context.Context) error {
 	return a.client.Ping(ctx)
 }

@@ -60,13 +60,6 @@ export class RunnerHealthMetricsDto {
   currentAllocatedDiskGiB: number
 
   @ApiProperty({
-    description: 'Number of snapshots currently stored',
-    example: 5,
-  })
-  @IsNumber()
-  currentSnapshotCount: number
-
-  @ApiProperty({
     description: 'Number of started boxes',
     example: 10,
   })

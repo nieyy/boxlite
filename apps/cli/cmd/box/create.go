@@ -37,10 +37,6 @@ var CreateCmd = &cobra.Command{
 
 		createBox := apiclient.NewCreateBox()
 
-		// Add non-zero values to the request
-		if snapshotFlag != "" {
-			createBox.SetSnapshot(snapshotFlag)
-		}
 		if nameFlag != "" {
 			createBox.SetName(nameFlag)
 		}
@@ -90,9 +86,6 @@ var CreateCmd = &cobra.Command{
 		}
 		if autoStopFlag >= 0 {
 			createBox.SetAutoStopInterval(autoStopFlag)
-		}
-		if autoArchiveFlag >= 0 {
-			createBox.SetAutoArchiveInterval(autoArchiveFlag)
 		}
 		createBox.SetAutoDeleteInterval(autoDeleteFlag)
 
@@ -146,11 +139,6 @@ var CreateCmd = &cobra.Command{
 				return err
 			}
 
-			err = common.AwaitBoxState(ctx, apiClient, box.Id, apiclient.BOXSTATE_BUILDING_SNAPSHOT)
-			if err != nil {
-				return err
-			}
-
 			logsContext, stopLogs := context.WithCancel(context.Background())
 			defer stopLogs()
 
@@ -188,7 +176,6 @@ var CreateCmd = &cobra.Command{
 }
 
 var (
-	snapshotFlag         string
 	nameFlag             string
 	userFlag             string
 	envFlag              []string
@@ -201,7 +188,6 @@ var (
 	memoryFlag           int32
 	diskFlag             int32
 	autoStopFlag         int32
-	autoArchiveFlag      int32
 	autoDeleteFlag       int32
 	volumesFlag          []string
 	dockerfileFlag       string
@@ -211,7 +197,6 @@ var (
 )
 
 func init() {
-	CreateCmd.Flags().StringVar(&snapshotFlag, "snapshot", "", "Snapshot to use for the box")
 	CreateCmd.Flags().StringVar(&nameFlag, "name", "", "Name of the box")
 	CreateCmd.Flags().StringVar(&userFlag, "user", "", "User associated with the box")
 	CreateCmd.Flags().StringArrayVarP(&envFlag, "env", "e", []string{}, "Environment variables (format: KEY=VALUE)")
@@ -224,14 +209,10 @@ func init() {
 	CreateCmd.Flags().Int32Var(&memoryFlag, "memory", 0, "Memory allocated to the box in MB")
 	CreateCmd.Flags().Int32Var(&diskFlag, "disk", 0, "Disk space allocated to the box in GB")
 	CreateCmd.Flags().Int32Var(&autoStopFlag, "auto-stop", 15, "Auto-stop interval in minutes (0 means disabled)")
-	CreateCmd.Flags().Int32Var(&autoArchiveFlag, "auto-archive", 10080, "Auto-archive interval in minutes (0 means the maximum interval will be used)")
 	CreateCmd.Flags().Int32Var(&autoDeleteFlag, "auto-delete", -1, "Auto-delete interval in minutes (negative value means disabled, 0 means delete immediately upon stopping)")
 	CreateCmd.Flags().StringArrayVarP(&volumesFlag, "volume", "v", []string{}, "Volumes to mount (format: VOLUME_NAME:MOUNT_PATH)")
-	CreateCmd.Flags().StringVarP(&dockerfileFlag, "dockerfile", "f", "", "Path to Dockerfile for Box snapshot")
+	CreateCmd.Flags().StringVarP(&dockerfileFlag, "dockerfile", "f", "", "Path to Dockerfile for box build")
 	CreateCmd.Flags().StringArrayVarP(&contextFlag, "context", "c", []string{}, "Files or directories to include in the build context (can be specified multiple times)")
 	CreateCmd.Flags().BoolVar(&networkBlockAllFlag, "network-block-all", false, "Whether to block all network access for the box")
 	CreateCmd.Flags().StringVar(&networkAllowListFlag, "network-allow-list", "", "Comma-separated list of allowed CIDR network addresses for the box")
-
-	CreateCmd.MarkFlagsMutuallyExclusive("snapshot", "dockerfile")
-	CreateCmd.MarkFlagsMutuallyExclusive("snapshot", "context")
 }

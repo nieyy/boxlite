@@ -5,7 +5,6 @@
 package controllers
 
 import (
-	"log/slog"
 	"net/http"
 
 	"github.com/boxlite-ai/runner/pkg/api/dto"
@@ -68,12 +67,12 @@ func Create(ctx *gin.Context) {
 //	@Description	Destroy box
 //	@Produce		json
 //	@Param			boxId	path		string	true	"Box ID"
-//	@Success		200		{string}	string	"Box destroyed"
-//	@Failure		400		{object}	common_errors.ErrorResponse
-//	@Failure		401		{object}	common_errors.ErrorResponse
-//	@Failure		404		{object}	common_errors.ErrorResponse
-//	@Failure		409		{object}	common_errors.ErrorResponse
-//	@Failure		500		{object}	common_errors.ErrorResponse
+//	@Success		200			{string}	string	"Box destroyed"
+//	@Failure		400			{object}	common_errors.ErrorResponse
+//	@Failure		401			{object}	common_errors.ErrorResponse
+//	@Failure		404			{object}	common_errors.ErrorResponse
+//	@Failure		409			{object}	common_errors.ErrorResponse
+//	@Failure		500			{object}	common_errors.ErrorResponse
 //	@Router			/boxes/{boxId}/destroy [post]
 //
 //	@id				Destroy
@@ -98,69 +97,20 @@ func Destroy(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, "Box destroyed")
 }
 
-// CreateBackup godoc
-//
-//	@Tags			box
-//	@Summary		Create box backup
-//	@Description	Create box backup
-//	@Produce		json
-//	@Param			boxId	path		string				true	"Box ID"
-//	@Param			box		body		dto.CreateBackupDTO	true	"Create backup"
-//	@Success		201		{string}	string				"Backup started"
-//	@Failure		400		{object}	common_errors.ErrorResponse
-//	@Failure		401		{object}	common_errors.ErrorResponse
-//	@Failure		404		{object}	common_errors.ErrorResponse
-//	@Failure		409		{object}	common_errors.ErrorResponse
-//	@Failure		500		{object}	common_errors.ErrorResponse
-//	@Router			/boxes/{boxId}/backup [post]
-//
-//	@id				CreateBackup
-func CreateBackup(logger *slog.Logger) gin.HandlerFunc {
-	return func(ctx *gin.Context) {
-		boxId := ctx.Param("boxId")
-
-		var createBackupDTO dto.CreateBackupDTO
-		err := ctx.ShouldBindJSON(&createBackupDTO)
-		if err != nil {
-			ctx.Error(common_errors.NewInvalidBodyRequestError(err))
-			return
-		}
-
-		runner, err := runner.GetInstance(nil)
-		if err != nil {
-			ctx.Error(err)
-			return
-		}
-
-		err = runner.Boxlite.CreateBackup(ctx.Request.Context(), boxId, createBackupDTO)
-		if err != nil {
-			setErr := runner.BackupInfoCache.SetBackupState(ctx.Request.Context(), boxId, enums.BackupStateFailed, createBackupDTO.Snapshot, err)
-			if setErr != nil {
-				logger.DebugContext(ctx.Request.Context(), "failed to update backup info", "error", setErr)
-			}
-
-			ctx.Error(err)
-			return
-		}
-
-		ctx.JSON(http.StatusCreated, "Backup started")
-	}
-}
-
 // Resize 			godoc
 //
 //	@Tags			box
 //	@Summary		Resize box
 //	@Description	Resize box
 //	@Produce		json
-//	@Param			boxId	path		string				true	"Box ID"
+//	@Param			boxId	path		string					true	"Box ID"
 //	@Param			box		body		dto.ResizeBoxDTO	true	"Resize box"
-//	@Success		200		{string}	string				"Box resized"
-//	@Failure		400		{object}	common_errors.ErrorResponse
-//	@Failure		401		{object}	common_errors.ErrorResponse
-//	@Failure		404		{object}	common_errors.ErrorResponse
-//	@Failure		409		{object}	common_errors.ErrorResponse
-//	@Failure		500		{object}	common_errors.ErrorResponse
+//	@Success		200			{string}	string					"Box resized"
+//	@Failure		400			{object}	common_errors.ErrorResponse
+//	@Failure		401			{object}	common_errors.ErrorResponse
+//	@Failure		404			{object}	common_errors.ErrorResponse
+//	@Failure		409			{object}	common_errors.ErrorResponse
+//	@Failure		500			{object}	common_errors.ErrorResponse
 //	@Router			/boxes/{boxId}/resize [post]
 //
 //	@id				Resize
@@ -200,12 +150,12 @@ func Resize(ctx *gin.Context) {
 //	@Produce		json
 //	@Param			boxId	path		string							true	"Box ID"
 //	@Param			box		body		dto.UpdateNetworkSettingsDTO	true	"Update network settings"
-//	@Success		200		{string}	string							"Network settings updated"
-//	@Failure		400		{object}	common_errors.ErrorResponse
-//	@Failure		401		{object}	common_errors.ErrorResponse
-//	@Failure		404		{object}	common_errors.ErrorResponse
-//	@Failure		409		{object}	common_errors.ErrorResponse
-//	@Failure		500		{object}	common_errors.ErrorResponse
+//	@Success		200			{string}	string							"Network settings updated"
+//	@Failure		400			{object}	common_errors.ErrorResponse
+//	@Failure		401			{object}	common_errors.ErrorResponse
+//	@Failure		404			{object}	common_errors.ErrorResponse
+//	@Failure		409			{object}	common_errors.ErrorResponse
+//	@Failure		500			{object}	common_errors.ErrorResponse
 //	@Router			/boxes/{boxId}/network-settings [post]
 //
 //	@id				UpdateNetworkSettings
@@ -240,12 +190,12 @@ func UpdateNetworkSettings(ctx *gin.Context) {
 //	@Description	Get box network settings
 //	@Produce		json
 //	@Param			boxId	path		string							true	"Box ID"
-//	@Success		200		{object}	dto.UpdateNetworkSettingsDTO	"Network settings"
-//	@Failure		400		{object}	common_errors.ErrorResponse
-//	@Failure		401		{object}	common_errors.ErrorResponse
-//	@Failure		404		{object}	common_errors.ErrorResponse
-//	@Failure		409		{object}	common_errors.ErrorResponse
-//	@Failure		500		{object}	common_errors.ErrorResponse
+//	@Success		200			{object}	dto.UpdateNetworkSettingsDTO	"Network settings"
+//	@Failure		400			{object}	common_errors.ErrorResponse
+//	@Failure		401			{object}	common_errors.ErrorResponse
+//	@Failure		404			{object}	common_errors.ErrorResponse
+//	@Failure		409			{object}	common_errors.ErrorResponse
+//	@Failure		500			{object}	common_errors.ErrorResponse
 //	@Router			/boxes/{boxId}/network-settings [get]
 //
 //	@id				GetNetworkSettings
@@ -274,9 +224,9 @@ func GetNetworkSettings(ctx *gin.Context) {
 //	@Summary		Start box
 //	@Description	Start box
 //	@Produce		json
-//	@Param			boxId		path		string					true	"Box ID"
-//	@Param			metadata	body		object					false	"Metadata"
-//	@Param			token		query		string					false	"Auth token"
+//	@Param			boxId	path		string						true	"Box ID"
+//	@Param			metadata	body		object						false	"Metadata"
+//	@Param			token		query		string						false	"Auth token"
 //	@Success		200			{object}	dto.StartBoxResponse	"Box started"
 //	@Failure		400			{object}	common_errors.ErrorResponse
 //	@Failure		401			{object}	common_errors.ErrorResponse
@@ -325,14 +275,14 @@ func Start(ctx *gin.Context) {
 //	@Summary		Stop box
 //	@Description	Stop box
 //	@Produce		json
-//	@Param			boxId	path		string			true	"Box ID"
+//	@Param			boxId	path		string				true	"Box ID"
 //	@Param			box		body		dto.StopBoxDTO	false	"Stop box"
-//	@Success		200		{string}	string			"Box stopped"
-//	@Failure		400		{object}	common_errors.ErrorResponse
-//	@Failure		401		{object}	common_errors.ErrorResponse
-//	@Failure		404		{object}	common_errors.ErrorResponse
-//	@Failure		409		{object}	common_errors.ErrorResponse
-//	@Failure		500		{object}	common_errors.ErrorResponse
+//	@Success		200			{string}	string				"Box stopped"
+//	@Failure		400			{object}	common_errors.ErrorResponse
+//	@Failure		401			{object}	common_errors.ErrorResponse
+//	@Failure		404			{object}	common_errors.ErrorResponse
+//	@Failure		409			{object}	common_errors.ErrorResponse
+//	@Failure		500			{object}	common_errors.ErrorResponse
 //	@Router			/boxes/{boxId}/stop [post]
 //
 //	@id				Stop
@@ -364,13 +314,13 @@ func Stop(ctx *gin.Context) {
 //	@Summary		Get box info
 //	@Description	Get box info
 //	@Produce		json
-//	@Param			boxId	path		string			true	"Box ID"
-//	@Success		200		{object}	BoxInfoResponse	"Box info"
-//	@Failure		400		{object}	common_errors.ErrorResponse
-//	@Failure		401		{object}	common_errors.ErrorResponse
-//	@Failure		404		{object}	common_errors.ErrorResponse
-//	@Failure		409		{object}	common_errors.ErrorResponse
-//	@Failure		500		{object}	common_errors.ErrorResponse
+//	@Param			boxId	path		string				true	"Box ID"
+//	@Success		200			{object}	BoxInfoResponse	"Box info"
+//	@Failure		400			{object}	common_errors.ErrorResponse
+//	@Failure		401			{object}	common_errors.ErrorResponse
+//	@Failure		404			{object}	common_errors.ErrorResponse
+//	@Failure		409			{object}	common_errors.ErrorResponse
+//	@Failure		500			{object}	common_errors.ErrorResponse
 //	@Router			/boxes/{boxId} [get]
 //
 //	@id				Info
@@ -398,20 +348,14 @@ func Info(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, BoxInfoResponse{
-		State:          info.BoxState,
-		BackupState:    info.BackupState,
-		BackupSnapshot: info.BackupSnapshot,
-		BackupError:    info.BackupErrorReason,
-		DaemonVersion:  daemonVersion,
+		State:         info.BoxState,
+		DaemonVersion: daemonVersion,
 	})
 }
 
 type BoxInfoResponse struct {
-	State          enums.BoxState    `json:"state"`
-	BackupState    enums.BackupState `json:"backupState"`
-	BackupSnapshot string            `json:"backupSnapshot,omitempty"`
-	BackupError    *string           `json:"backupError,omitempty"`
-	DaemonVersion  *string           `json:"daemonVersion,omitempty"`
+	State         enums.BoxState `json:"state"`
+	DaemonVersion *string        `json:"daemonVersion,omitempty"`
 } //	@name	BoxInfoResponse
 
 // Recover godoc
@@ -421,9 +365,9 @@ type BoxInfoResponse struct {
 //	@Tags			box
 //	@Accept			json
 //	@Produce		json
-//	@Param			boxId		path		string				true	"Box ID"
+//	@Param			boxId	path		string					true	"Box ID"
 //	@Param			recovery	body		dto.RecoverBoxDTO	true	"Recovery parameters"
-//	@Success		200			{string}	string				"Box recovered"
+//	@Success		200			{string}	string					"Box recovered"
 //	@Failure		400			{object}	common_errors.ErrorResponse
 //	@Failure		401			{object}	common_errors.ErrorResponse
 //	@Failure		404			{object}	common_errors.ErrorResponse
@@ -464,9 +408,9 @@ func Recover(ctx *gin.Context) {
 //	@Accept			json
 //	@Produce		json
 //	@Param			boxId	path		string					true	"Box ID"
-//	@Param			request	body		dto.IsRecoverableDTO	true	"Error reason to check"
-//	@Success		200		{object}	dto.IsRecoverableResponse
-//	@Failure		400		{object}	common_errors.ErrorResponse
+//	@Param			request		body		dto.IsRecoverableDTO	true	"Error reason to check"
+//	@Success		200			{object}	dto.IsRecoverableResponse
+//	@Failure		400			{object}	common_errors.ErrorResponse
 //	@Router			/boxes/{boxId}/is-recoverable [post]
 //
 //	@id				IsRecoverable

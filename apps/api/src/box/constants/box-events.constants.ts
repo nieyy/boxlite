@@ -14,5 +14,4 @@ export const BoxEvents = {
   DESTROYED: 'box.destroyed',
   PUBLIC_STATUS_UPDATED: 'box.public-status.updated',
   ORGANIZATION_UPDATED: 'box.organization.updated',
-  BACKUP_CREATED: 'box.backup.created',
 } as const

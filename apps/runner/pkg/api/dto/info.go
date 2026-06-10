@@ -12,7 +12,6 @@ type RunnerMetrics struct {
 	CurrentAllocatedCpu          float64 `json:"currentAllocatedCpu"`
 	CurrentAllocatedMemoryGiB    float64 `json:"currentAllocatedMemoryGiB"`
 	CurrentAllocatedDiskGiB      float64 `json:"currentAllocatedDiskGiB"`
-	CurrentSnapshotCount         int     `json:"currentSnapshotCount"`
 	CurrentStartedBoxes          int64   `json:"currentStartedBoxes"`
 } //	@name	RunnerMetrics
 

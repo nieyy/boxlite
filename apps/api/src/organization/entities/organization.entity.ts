@@ -8,7 +8,6 @@ import { Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn, Up
 import { OrganizationUser } from './organization-user.entity'
 import { OrganizationRole } from './organization-role.entity'
 import { OrganizationInvitation } from './organization-invitation.entity'
-import { RegionQuota } from './region-quota.entity'
 
 @Entity()
 export class Organization {
@@ -20,11 +19,6 @@ export class Organization {
 
   @Column()
   createdBy: string
-
-  @Column({
-    default: false,
-  })
-  personal: boolean
 
   @Column({
     default: true,
@@ -54,27 +48,6 @@ export class Organization {
     name: 'max_disk_per_box',
   })
   maxDiskPerBox: number
-
-  @Column({
-    type: 'int',
-    default: 20,
-    name: 'max_snapshot_size',
-  })
-  maxSnapshotSize: number
-
-  @Column({
-    type: 'int',
-    default: 100,
-    name: 'snapshot_quota',
-  })
-  snapshotQuota: number
-
-  @Column({
-    type: 'int',
-    default: 100,
-    name: 'volume_quota',
-  })
-  volumeQuota: number
 
   @Column({
     type: 'int',
@@ -117,12 +90,6 @@ export class Organization {
     name: 'box_lifecycle_rate_limit_ttl_seconds',
   })
   boxLifecycleRateLimitTtlSeconds: number | null
-
-  @OneToMany(() => RegionQuota, (quota) => quota.organization, {
-    cascade: true,
-    onDelete: 'CASCADE',
-  })
-  regionQuotas: RegionQuota[]
 
   @OneToMany(() => OrganizationRole, (organizationRole) => organizationRole.organization, {
     cascade: true,
@@ -173,9 +140,9 @@ export class Organization {
   @Column({
     type: 'int',
     default: 20160,
-    name: 'snapshot_deactivation_timeout_minutes',
+    name: 'template_deactivation_timeout_minutes',
   })
-  snapshotDeactivationTimeoutMinutes: number
+  templateDeactivationTimeoutMinutes: number
 
   @Column({
     default: false,

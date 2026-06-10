@@ -18,12 +18,6 @@ import {
   UseInterceptors,
   Put,
   NotFoundException,
-  ForbiddenException,
-  Res,
-  Request,
-  RawBodyRequest,
-  Next,
-  ParseBoolPipe,
 } from '@nestjs/common'
 import Redis from 'ioredis'
 import { CombinedAuthGuard } from '../../auth/combined-auth.guard'
@@ -52,9 +46,6 @@ import { RequiredOrganizationResourcePermissions } from '../../organization/deco
 import { OrganizationResourcePermission } from '../../organization/enums/organization-resource-permission.enum'
 import { OrganizationResourceActionGuard } from '../../organization/guards/organization-resource-action.guard'
 import { WorkspacePortPreviewUrlDto } from '../dto/workspace-port-preview-url.deprecated.dto'
-import { IncomingMessage, ServerResponse } from 'http'
-import { NextFunction } from 'http-proxy-middleware/dist/types'
-import { LogProxy } from '../proxy/log-proxy'
 import { CreateWorkspaceDto } from '../dto/create-workspace.deprecated.dto'
 import { TypedConfigService } from '../../config/typed-config.service'
 import { BadRequestError } from '../../exceptions/bad-request.exception'
@@ -151,9 +142,7 @@ export class WorkspaceController {
         memory: req.body?.memory,
         disk: req.body?.disk,
         autoStopInterval: req.body?.autoStopInterval,
-        autoArchiveInterval: req.body?.autoArchiveInterval,
         volumes: req.body?.volumes,
-        buildInfo: req.body?.buildInfo,
       }),
     },
   })
@@ -161,20 +150,14 @@ export class WorkspaceController {
     @AuthContext() authContext: OrganizationAuthContext,
     @Body() createWorkspaceDto: CreateWorkspaceDto,
   ): Promise<WorkspaceDto> {
-    if (createWorkspaceDto.buildInfo) {
-      throw new ForbiddenException('Build info is not supported in this deprecated API - please upgrade your client')
-    }
-
     const organization = authContext.organization
 
     const workspace = WorkspaceDto.fromBoxDto(
-      await this.workspaceService.createFromSnapshot(
+      await this.workspaceService.createFromTemplate(
         {
           ...createWorkspaceDto,
-          snapshot: createWorkspaceDto.image,
         },
         organization,
-        true,
       ),
     )
 
@@ -346,33 +329,6 @@ export class WorkspaceController {
     return { labels }
   }
 
-  @Post(':workspaceId/backup')
-  @ApiOperation({
-    summary: '[DEPRECATED] Create workspace backup',
-    operationId: 'createBackupWorkspace_deprecated',
-    deprecated: true,
-  })
-  @ApiParam({
-    name: 'workspaceId',
-    description: 'ID of the workspace',
-    type: 'string',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Workspace backup has been initiated',
-    type: WorkspaceDto,
-  })
-  @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_BOXES])
-  @UseGuards(WorkspaceAccessGuard)
-  @Audit({
-    action: AuditAction.CREATE_BACKUP,
-    targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.workspaceId,
-  })
-  async createBackup(@Param('workspaceId') workspaceId: string): Promise<void> {
-    await this.workspaceService.createBackup(workspaceId)
-  }
-
   @Post(':workspaceId/public/:isPublic')
   @ApiOperation({
     summary: '[DEPRECATED] Update public status',
@@ -447,67 +403,6 @@ export class WorkspaceController {
     await this.workspaceService.setAutostopInterval(workspaceId, interval)
   }
 
-  @Post(':workspaceId/autoarchive/:interval')
-  @ApiOperation({
-    summary: '[DEPRECATED] Set workspace auto-archive interval',
-    operationId: 'setAutoArchiveIntervalWorkspace_deprecated',
-    deprecated: true,
-  })
-  @ApiParam({
-    name: 'workspaceId',
-    description: 'ID of the workspace',
-    type: 'string',
-  })
-  @ApiParam({
-    name: 'interval',
-    description: 'Auto-archive interval in minutes (0 means the maximum interval will be used)',
-    type: 'number',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Auto-archive interval has been set',
-  })
-  @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_BOXES])
-  @UseGuards(WorkspaceAccessGuard)
-  @Audit({
-    action: AuditAction.SET_AUTO_ARCHIVE_INTERVAL,
-    targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.workspaceId,
-    requestMetadata: {
-      params: (req) => ({
-        interval: req.params.interval,
-      }),
-    },
-  })
-  async setAutoArchiveInterval(
-    @Param('workspaceId') workspaceId: string,
-    @Param('interval') interval: number,
-  ): Promise<void> {
-    await this.workspaceService.setAutoArchiveInterval(workspaceId, interval)
-  }
-
-  @Post(':workspaceId/archive')
-  @HttpCode(200)
-  @ApiOperation({
-    summary: '[DEPRECATED] Archive workspace',
-    operationId: 'archiveWorkspace_deprecated',
-    deprecated: true,
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Workspace has been archived',
-  })
-  @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_BOXES])
-  @UseGuards(WorkspaceAccessGuard)
-  @Audit({
-    action: AuditAction.ARCHIVE,
-    targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.workspaceId,
-  })
-  async archiveWorkspace(@Param('workspaceId') workspaceId: string): Promise<void> {
-    await this.workspaceService.archive(workspaceId)
-  }
-
   @Get(':workspaceId/ports/:port/preview-url')
   @ApiOperation({
     summary: '[DEPRECATED] Get preview URL for a workspace port',
@@ -551,62 +446,6 @@ export class WorkspaceController {
     }
   }
 
-  @Get(':workspaceId/build-logs')
-  @ApiOperation({
-    summary: '[DEPRECATED] Get build logs',
-    operationId: 'getBuildLogsWorkspace_deprecated',
-    deprecated: true,
-  })
-  @ApiParam({
-    name: 'workspaceId',
-    description: 'ID of the workspace',
-    type: 'string',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Build logs stream',
-  })
-  @ApiQuery({
-    name: 'follow',
-    required: false,
-    type: Boolean,
-    description: 'Whether to follow the logs stream',
-  })
-  @UseGuards(WorkspaceAccessGuard)
-  async getBuildLogs(
-    @Request() req: RawBodyRequest<IncomingMessage>,
-    @Res() res: ServerResponse<IncomingMessage>,
-    @Next() next: NextFunction,
-    @Param('workspaceId') workspaceId: string,
-    @Query('follow', new ParseBoolPipe({ optional: true })) follow?: boolean,
-  ): Promise<void> {
-    const workspace = await this.workspaceService.findOne(workspaceId)
-    if (!workspace || !workspace.runnerId) {
-      throw new NotFoundException(`Workspace with ID ${workspaceId} not found or has no runner assigned`)
-    }
-
-    if (!workspace.buildInfo) {
-      throw new NotFoundException(`Workspace with ID ${workspaceId} has no build info`)
-    }
-
-    const runner = await this.runnerService.findOneOrFail(workspace.runnerId)
-
-    if (!runner.apiUrl) {
-      throw new NotFoundException(`Runner for workspace ${workspaceId} has no API URL`)
-    }
-
-    const logProxy = new LogProxy(
-      runner.apiUrl,
-      workspace.buildInfo.snapshotRef.split(':')[0],
-      runner.apiKey,
-      follow === true,
-      req,
-      res,
-      next,
-    )
-    return logProxy.create()
-  }
-
   private async waitForWorkspaceState(
     workspaceId: string,
     desiredState: WorkspaceState,
@@ -618,11 +457,7 @@ export class WorkspaceController {
     while (Date.now() - startTime < timeout) {
       const workspace = await this.workspaceService.findOne(workspaceId)
       workspaceState = workspace.state
-      if (
-        workspaceState === desiredState ||
-        workspaceState === WorkspaceState.ERROR ||
-        workspaceState === WorkspaceState.BUILD_FAILED
-      ) {
+      if (workspaceState === desiredState || workspaceState === WorkspaceState.ERROR) {
         return workspaceState
       }
       await new Promise((resolve) => setTimeout(resolve, 100)) // Wait 100 ms before checking again

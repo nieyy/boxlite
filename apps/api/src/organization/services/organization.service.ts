@@ -12,11 +12,11 @@ import {
   OnModuleInit,
   OnApplicationShutdown,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { EntityManager, In, Not, Repository } from 'typeorm'
 import { CreateOrganizationInternalDto } from '../dto/create-organization.internal.dto'
-import { UpdateOrganizationQuotaDto } from '../dto/update-organization-quota.dto'
 import { Organization } from '../entities/organization.entity'
 import { OrganizationUser } from '../entities/organization-user.entity'
 import { OrganizationMemberRole } from '../enums/organization-member-role.enum'
@@ -24,30 +24,23 @@ import { OnAsyncEvent } from '../../common/decorators/on-async-event.decorator'
 import { UserEvents } from '../../user/constants/user-events.constant'
 import { UserCreatedEvent } from '../../user/events/user-created.event'
 import { UserDeletedEvent } from '../../user/events/user-deleted.event'
-import { Snapshot } from '../../box/entities/snapshot.entity'
 import { BoxState } from '../../box/enums/box-state.enum'
 import { EventEmitter2 } from '@nestjs/event-emitter'
 import { OrganizationEvents } from '../constants/organization-events.constant'
-import { CreateOrganizationQuotaDto } from '../dto/create-organization-quota.dto'
 import { UserEmailVerifiedEvent } from '../../user/events/user-email-verified.event'
 import { Cron, CronExpression } from '@nestjs/schedule'
 import { RedisLockProvider } from '../../box/common/redis-lock.provider'
 import { OrganizationSuspendedBoxStoppedEvent } from '../events/organization-suspended-box-stopped.event'
 import { BoxDesiredState } from '../../box/enums/box-desired-state.enum'
 import { SystemRole } from '../../user/enums/system-role.enum'
-import { SnapshotState } from '../../box/enums/snapshot-state.enum'
-import { OrganizationSuspendedSnapshotDeactivatedEvent } from '../events/organization-suspended-snapshot-deactivated.event'
 import { TrackJobExecution } from '../../common/decorators/track-job-execution.decorator'
 import { TrackableJobExecutions } from '../../common/interfaces/trackable-job-executions'
 import { setTimeout } from 'timers/promises'
 import { TypedConfigService } from '../../config/typed-config.service'
 import { LogExecution } from '../../common/decorators/log-execution.decorator'
 import { WithInstrumentation } from '../../common/decorators/otel.decorator'
-import { RegionQuota } from '../entities/region-quota.entity'
-import { UpdateOrganizationRegionQuotaDto } from '../dto/update-organization-region-quota.dto'
 import { RegionService } from '../../region/services/region.service'
 import { Region } from '../../region/entities/region.entity'
-import { RegionQuotaDto } from '../dto/region-quota.dto'
 import { RegionType } from '../../region/enums/region-type.enum'
 import { RegionDto } from '../../region/dto/region.dto'
 import { EncryptionService } from '../../encryption/encryption.service'
@@ -57,28 +50,24 @@ import { BoxRepository } from '../../box/repositories/box.repository'
 
 @Injectable()
 export class OrganizationService implements OnModuleInit, TrackableJobExecutions, OnApplicationShutdown {
+  private static readonly DEFAULT_ORGANIZATION_NAME = 'Default Organization'
+
   activeJobs = new Set<string>()
   private readonly logger = new Logger(OrganizationService.name)
-  private defaultOrganizationQuota: CreateOrganizationQuotaDto
   private defaultBoxLimitedNetworkEgress: boolean
 
   constructor(
     @InjectRepository(Organization)
     private readonly organizationRepository: Repository<Organization>,
     private readonly boxRepository: BoxRepository,
-    @InjectRepository(Snapshot)
-    private readonly snapshotRepository: Repository<Snapshot>,
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: TypedConfigService,
     private readonly redisLockProvider: RedisLockProvider,
-    @InjectRepository(RegionQuota)
-    private readonly regionQuotaRepository: Repository<RegionQuota>,
     @InjectRepository(Region)
     private readonly regionRepository: Repository<Region>,
     private readonly regionService: RegionService,
     private readonly encryptionService: EncryptionService,
   ) {
-    this.defaultOrganizationQuota = this.configService.getOrThrow('defaultOrganizationQuota')
     this.defaultBoxLimitedNetworkEgress = this.configService.getOrThrow('organizationBoxDefaultLimitedNetworkEgress')
   }
 
@@ -97,7 +86,7 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
   async create(
     createOrganizationDto: CreateOrganizationInternalDto,
     createdBy: string,
-    personal = false,
+    defaultForCreator = false,
     creatorEmailVerified = false,
   ): Promise<Organization> {
     return this.createWithEntityManager(
@@ -105,7 +94,7 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
       createOrganizationDto,
       createdBy,
       creatorEmailVerified,
-      personal,
+      defaultForCreator,
     )
   }
 
@@ -122,6 +111,16 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
   async findOne(organizationId: string): Promise<Organization | null> {
     return this.organizationRepository.findOne({
       where: { id: organizationId },
+    })
+  }
+
+  async findByIds(organizationIds: string[]): Promise<Organization[]> {
+    if (organizationIds.length === 0) {
+      return []
+    }
+
+    return this.organizationRepository.find({
+      where: { id: In(organizationIds) },
     })
   }
 
@@ -153,8 +152,27 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
     return this.organizationRepository.findOne({ where: { id: box.organizationId } })
   }
 
-  async findPersonal(userId: string): Promise<Organization> {
-    return this.findPersonalWithEntityManager(this.organizationRepository.manager, userId)
+  async findDefaultForUser(userId: string): Promise<Organization> {
+    return this.findDefaultForUserWithEntityManager(this.organizationRepository.manager, userId)
+  }
+
+  async findByUserWithDefaultFlag(
+    userId: string,
+  ): Promise<{ organization: Organization; isDefaultForAuthenticatedUser: boolean }[]> {
+    const memberships = await this.organizationRepository.manager.find(OrganizationUser, {
+      where: { userId },
+      relations: {
+        organization: true,
+      },
+      order: {
+        createdAt: 'ASC',
+      },
+    })
+
+    return memberships.map((membership) => ({
+      organization: membership.organization,
+      isDefaultForAuthenticatedUser: membership.isDefaultForUser,
+    }))
   }
 
   async delete(organizationId: string): Promise<void> {
@@ -167,71 +185,20 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
     return this.removeWithEntityManager(this.organizationRepository.manager, organization)
   }
 
-  async updateQuota(organizationId: string, updateDto: UpdateOrganizationQuotaDto): Promise<void> {
+  async updateName(organizationId: string, name: string): Promise<Organization> {
     const organization = await this.organizationRepository.findOne({ where: { id: organizationId } })
     if (!organization) {
       throw new NotFoundException(`Organization with ID ${organizationId} not found`)
     }
 
-    organization.maxCpuPerBox = updateDto.maxCpuPerBox ?? organization.maxCpuPerBox
-    organization.maxMemoryPerBox = updateDto.maxMemoryPerBox ?? organization.maxMemoryPerBox
-    organization.maxDiskPerBox = updateDto.maxDiskPerBox ?? organization.maxDiskPerBox
-    organization.maxSnapshotSize = updateDto.maxSnapshotSize ?? organization.maxSnapshotSize
-    organization.volumeQuota = updateDto.volumeQuota ?? organization.volumeQuota
-    organization.snapshotQuota = updateDto.snapshotQuota ?? organization.snapshotQuota
-    organization.authenticatedRateLimit = updateDto.authenticatedRateLimit ?? organization.authenticatedRateLimit
-    organization.boxCreateRateLimit = updateDto.boxCreateRateLimit ?? organization.boxCreateRateLimit
-    organization.boxLifecycleRateLimit = updateDto.boxLifecycleRateLimit ?? organization.boxLifecycleRateLimit
-    organization.authenticatedRateLimitTtlSeconds =
-      updateDto.authenticatedRateLimitTtlSeconds ?? organization.authenticatedRateLimitTtlSeconds
-    organization.boxCreateRateLimitTtlSeconds =
-      updateDto.boxCreateRateLimitTtlSeconds ?? organization.boxCreateRateLimitTtlSeconds
-    organization.boxLifecycleRateLimitTtlSeconds =
-      updateDto.boxLifecycleRateLimitTtlSeconds ?? organization.boxLifecycleRateLimitTtlSeconds
-    organization.snapshotDeactivationTimeoutMinutes =
-      updateDto.snapshotDeactivationTimeoutMinutes ?? organization.snapshotDeactivationTimeoutMinutes
-
-    await this.organizationRepository.save(organization)
-  }
-
-  async updateRegionQuota(
-    organizationId: string,
-    regionId: string,
-    updateDto: UpdateOrganizationRegionQuotaDto,
-  ): Promise<void> {
-    const regionQuota = await this.regionQuotaRepository.findOne({ where: { organizationId, regionId } })
-    if (!regionQuota) {
-      throw new NotFoundException('Region not found')
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      throw new BadRequestException('Organization name is required')
     }
 
-    regionQuota.totalCpuQuota = updateDto.totalCpuQuota ?? regionQuota.totalCpuQuota
-    regionQuota.totalMemoryQuota = updateDto.totalMemoryQuota ?? regionQuota.totalMemoryQuota
-    regionQuota.totalDiskQuota = updateDto.totalDiskQuota ?? regionQuota.totalDiskQuota
+    organization.name = trimmedName
 
-    await this.regionQuotaRepository.save(regionQuota)
-  }
-
-  async getRegionQuotas(organizationId: string): Promise<RegionQuotaDto[]> {
-    const regionQuotas = await this.regionQuotaRepository.find({ where: { organizationId } })
-    return regionQuotas.map((regionQuota) => new RegionQuotaDto(regionQuota))
-  }
-
-  async getRegionQuota(organizationId: string, regionId: string): Promise<RegionQuotaDto | null> {
-    const regionQuota = await this.regionQuotaRepository.findOne({ where: { organizationId, regionId } })
-    if (!regionQuota) {
-      return null
-    }
-    return new RegionQuotaDto(regionQuota)
-  }
-
-  async getRegionQuotaByBoxId(boxId: string): Promise<RegionQuotaDto | null> {
-    const box = await this.boxRepository.findOne({
-      where: { id: boxId },
-    })
-    if (!box) {
-      return null
-    }
-    return this.getRegionQuota(box.organizationId, box.region)
+    return this.organizationRepository.save(organization)
   }
 
   /**
@@ -339,23 +306,8 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
       throw new ConflictException('Organization already has a default region set')
     }
 
-    const defaultRegion = await this.validateOrganizationDefaultRegion(defaultRegionId)
+    await this.validateOrganizationDefaultRegion(defaultRegionId)
     organization.defaultRegionId = defaultRegionId
-
-    if (defaultRegion.enforceQuotas) {
-      const regionQuota = new RegionQuota(
-        organization.id,
-        defaultRegionId,
-        this.defaultOrganizationQuota.totalCpuQuota,
-        this.defaultOrganizationQuota.totalMemoryQuota,
-        this.defaultOrganizationQuota.totalDiskQuota,
-      )
-      if (organization.regionQuotas) {
-        organization.regionQuotas = [...organization.regionQuotas, regionQuota]
-      } else {
-        organization.regionQuotas = [regionQuota]
-      }
-    }
 
     await this.organizationRepository.save(organization)
   }
@@ -456,16 +408,18 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
     createOrganizationDto: CreateOrganizationInternalDto,
     createdBy: string,
     creatorEmailVerified: boolean,
-    personal = false,
-    quota: CreateOrganizationQuotaDto = this.defaultOrganizationQuota,
+    defaultForCreator = false,
     boxLimitedNetworkEgress: boolean = this.defaultBoxLimitedNetworkEgress,
   ): Promise<Organization> {
-    if (personal) {
-      const count = await entityManager.count(Organization, {
-        where: { createdBy, personal: true },
+    if (defaultForCreator) {
+      const count = await entityManager.count(OrganizationUser, {
+        where: {
+          userId: createdBy,
+          isDefaultForUser: true,
+        },
       })
       if (count > 0) {
-        throw new ForbiddenException('Personal organization already exists')
+        throw new ForbiddenException('Default organization already exists for user')
       }
     }
 
@@ -481,20 +435,12 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
 
     organization.name = createOrganizationDto.name
     organization.createdBy = createdBy
-    organization.personal = personal
-
-    organization.maxCpuPerBox = quota.maxCpuPerBox
-    organization.maxMemoryPerBox = quota.maxMemoryPerBox
-    organization.maxDiskPerBox = quota.maxDiskPerBox
-    organization.snapshotQuota = quota.snapshotQuota
-    organization.maxSnapshotSize = quota.maxSnapshotSize
-    organization.volumeQuota = quota.volumeQuota
 
     if (!creatorEmailVerified && !this.configService.get('skipUserEmailVerification')) {
       organization.suspended = true
       organization.suspendedAt = new Date()
       organization.suspensionReason = 'Please verify your email address'
-    } else if (this.configService.get('billingApiUrl') && !personal) {
+    } else if (this.configService.get('billingApiUrl') && !defaultForCreator) {
       organization.suspended = true
       organization.suspendedAt = new Date()
       organization.suspensionReason = 'Payment method required'
@@ -505,22 +451,12 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
     const owner = new OrganizationUser()
     owner.userId = createdBy
     owner.role = OrganizationMemberRole.OWNER
+    owner.isDefaultForUser = defaultForCreator
 
     organization.users = [owner]
 
     if (createOrganizationDto.defaultRegionId) {
-      const defaultRegion = await this.validateOrganizationDefaultRegion(createOrganizationDto.defaultRegionId)
-
-      if (defaultRegion.enforceQuotas) {
-        const regionQuota = new RegionQuota(
-          organization.id,
-          createOrganizationDto.defaultRegionId,
-          quota.totalCpuQuota,
-          quota.totalMemoryQuota,
-          quota.totalDiskQuota,
-        )
-        organization.regionQuotas = [regionQuota]
-      }
+      await this.validateOrganizationDefaultRegion(createOrganizationDto.defaultRegionId)
     }
 
     await entityManager.transaction(async (em) => {
@@ -537,15 +473,22 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
     force = false,
   ): Promise<void> {
     if (!force) {
-      if (organization.personal) {
-        throw new ForbiddenException('Cannot delete personal organization')
+      const defaultMembershipsCount = await entityManager.count(OrganizationUser, {
+        where: {
+          organizationId: organization.id,
+          isDefaultForUser: true,
+        },
+      })
+
+      if (defaultMembershipsCount > 0) {
+        throw new ForbiddenException("Cannot delete an organization while it is a user's default organization")
       }
     }
     await entityManager.remove(organization)
   }
 
-  private async unsuspendPersonalWithEntityManager(entityManager: EntityManager, userId: string): Promise<void> {
-    const organization = await this.findPersonalWithEntityManager(entityManager, userId)
+  private async unsuspendDefaultForUserWithEntityManager(entityManager: EntityManager, userId: string): Promise<void> {
+    const organization = await this.findDefaultForUserWithEntityManager(entityManager, userId)
 
     organization.suspended = false
     organization.suspendedAt = null
@@ -554,16 +497,25 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
     await entityManager.save(organization)
   }
 
-  private async findPersonalWithEntityManager(entityManager: EntityManager, userId: string): Promise<Organization> {
-    const organization = await entityManager.findOne(Organization, {
-      where: { createdBy: userId, personal: true },
+  private async findDefaultForUserWithEntityManager(
+    entityManager: EntityManager,
+    userId: string,
+  ): Promise<Organization> {
+    const membership = await entityManager.findOne(OrganizationUser, {
+      where: {
+        userId,
+        isDefaultForUser: true,
+      },
+      relations: {
+        organization: true,
+      },
     })
 
-    if (!organization) {
-      throw new NotFoundException(`Personal organization for user ${userId} not found`)
+    if (!membership?.organization) {
+      throw new NotFoundException(`Default organization for user ${userId} not found`)
     }
 
-    return organization
+    return membership.organization
   }
 
   /**
@@ -600,7 +552,7 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
           .createQueryBuilder('box')
           .select('1')
           .where(
-            `"box"."organizationId" = "organization"."id" AND "box"."desiredState" = '${BoxDesiredState.STARTED}' and "box"."state" NOT IN ('${BoxState.ERROR}', '${BoxState.BUILD_FAILED}')`,
+            `"box"."organizationId" = "organization"."id" AND "box"."desiredState" = '${BoxDesiredState.STARTED}' and "box"."state" NOT IN ('${BoxState.ERROR}')`,
           ),
       )
       .take(100)
@@ -618,7 +570,7 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
       where: {
         organizationId: In(suspendedOrganizationIds),
         desiredState: BoxDesiredState.STARTED,
-        state: Not(In([BoxState.ERROR, BoxState.BUILD_FAILED])),
+        state: Not(In([BoxState.ERROR])),
       },
     })
 
@@ -632,62 +584,8 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
     await this.redisLockProvider.unlock(lockKey)
   }
 
-  @Cron(CronExpression.EVERY_MINUTE, { name: 'deactivate-suspended-organization-snapshots' })
-  @TrackJobExecution()
-  @LogExecution('deactivate-suspended-organization-snapshots')
-  @WithInstrumentation()
-  async deactivateSuspendedOrganizationSnapshots(): Promise<void> {
-    //  lock the sync to only run one instance at a time
-    const lockKey = 'deactivate-suspended-organization-snapshots'
-    if (!(await this.redisLockProvider.lock(lockKey, 60))) {
-      return
-    }
-
-    const queryResult = await this.organizationRepository
-      .createQueryBuilder('organization')
-      .select('id')
-      .where('suspended = true')
-      .andWhere(`"suspendedAt" < NOW() - INTERVAL '1 hour' * "suspensionCleanupGracePeriodHours"`)
-      .andWhere(`"suspendedAt" > NOW() - INTERVAL '7 day'`)
-      .andWhereExists(
-        this.snapshotRepository
-          .createQueryBuilder('snapshot')
-          .select('1')
-          .where('snapshot.organizationId = organization.id')
-          .andWhere(`snapshot.state = '${SnapshotState.ACTIVE}'`)
-          .andWhere(`snapshot.general = false`),
-      )
-      .take(100)
-      .getRawMany()
-
-    const suspendedOrganizationIds = queryResult.map((result) => result.id)
-
-    // Skip if no suspended organizations found to avoid empty IN clause
-    if (suspendedOrganizationIds.length === 0) {
-      await this.redisLockProvider.unlock(lockKey)
-      return
-    }
-
-    const snapshotQueryResult = await this.snapshotRepository
-      .createQueryBuilder('snapshot')
-      .select('id')
-      .where('snapshot.organizationId IN (:...suspendedOrgIds)', { suspendedOrgIds: suspendedOrganizationIds })
-      .andWhere(`snapshot.state = '${SnapshotState.ACTIVE}'`)
-      .andWhere(`snapshot.general = false`)
-      .take(100)
-      .getRawMany()
-
-    const snapshotIds = snapshotQueryResult.map((result) => result.id)
-
-    snapshotIds.map((id) =>
-      this.eventEmitter.emitAsync(
-        OrganizationEvents.SUSPENDED_SNAPSHOT_DEACTIVATED,
-        new OrganizationSuspendedSnapshotDeactivatedEvent(id),
-      ),
-    )
-
-    await this.redisLockProvider.unlock(lockKey)
-  }
+  // TODO(image-rewrite): deactivateSuspendedOrganizationTemplates cron removed with box_template;
+  // rebuild suspended-org template cleanup once the image/template model lands.
 
   @OnAsyncEvent({
     event: UserEvents.CREATED,
@@ -697,13 +595,12 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
     return this.createWithEntityManager(
       payload.entityManager,
       {
-        name: 'Personal',
-        defaultRegionId: payload.personalOrganizationDefaultRegionId,
+        name: OrganizationService.DEFAULT_ORGANIZATION_NAME,
+        defaultRegionId: payload.defaultOrganizationDefaultRegionId,
       },
       payload.user.id,
       payload.user.role === SystemRole.ADMIN ? true : payload.user.emailVerified,
       true,
-      payload.personalOrganizationQuota,
       payload.user.role === SystemRole.ADMIN ? false : undefined,
     )
   }
@@ -713,7 +610,7 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
   })
   @TrackJobExecution()
   async handleUserEmailVerifiedEvent(payload: UserEmailVerifiedEvent): Promise<void> {
-    await this.unsuspendPersonalWithEntityManager(payload.entityManager, payload.userId)
+    await this.unsuspendDefaultForUserWithEntityManager(payload.entityManager, payload.userId)
   }
 
   @OnAsyncEvent({
@@ -721,9 +618,57 @@ export class OrganizationService implements OnModuleInit, TrackableJobExecutions
   })
   @TrackJobExecution()
   async handleUserDeletedEvent(payload: UserDeletedEvent): Promise<void> {
-    const organization = await this.findPersonalWithEntityManager(payload.entityManager, payload.userId)
+    const organization = await this.findDefaultForUserWithEntityManager(payload.entityManager, payload.userId)
+    const membersCount = await payload.entityManager.count(OrganizationUser, {
+      where: {
+        organizationId: organization.id,
+      },
+    })
 
-    await this.removeWithEntityManager(payload.entityManager, organization, true)
+    if (membersCount <= 1) {
+      await this.removeWithEntityManager(payload.entityManager, organization, true)
+      return
+    }
+
+    const deletedUserMembership = await payload.entityManager.findOne(OrganizationUser, {
+      where: {
+        organizationId: organization.id,
+        userId: payload.userId,
+      },
+    })
+
+    if (!deletedUserMembership) {
+      return
+    }
+
+    if (deletedUserMembership.role === OrganizationMemberRole.OWNER) {
+      const otherOwnersCount = await payload.entityManager.count(OrganizationUser, {
+        where: {
+          organizationId: organization.id,
+          role: OrganizationMemberRole.OWNER,
+          userId: Not(payload.userId),
+        },
+      })
+
+      if (otherOwnersCount === 0) {
+        const fallbackOwner = await payload.entityManager.findOne(OrganizationUser, {
+          where: {
+            organizationId: organization.id,
+            userId: Not(payload.userId),
+          },
+          order: {
+            createdAt: 'ASC',
+          },
+        })
+
+        if (fallbackOwner) {
+          fallbackOwner.role = OrganizationMemberRole.OWNER
+          await payload.entityManager.save(fallbackOwner)
+        }
+      }
+    }
+
+    await payload.entityManager.remove(deletedUserMembership)
   }
 
   assertOrganizationIsNotSuspended(organization: Organization): void {

@@ -11,6 +11,5 @@ export const OrganizationEvents = {
   INVITATION_CANCELLED: 'invitation.cancelled',
   CREATED: 'organization.created',
   SUSPENDED_BOX_STOPPED: 'organization.suspended-box-stopped',
-  SUSPENDED_SNAPSHOT_DEACTIVATED: 'organization.suspended-snapshot-deactivated',
   PERMISSIONS_UNASSIGNED: 'permissions.unassigned',
 } as const

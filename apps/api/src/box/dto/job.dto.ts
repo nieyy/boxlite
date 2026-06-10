@@ -51,7 +51,7 @@ export class JobDto {
   resourceType: ResourceType
 
   @ApiProperty({
-    description: 'The ID of the resource this job operates on (boxId, snapshotRef, etc.)',
+    description: 'The ID of the resource this job operates on (boxId, etc.)',
     example: 'box123',
   })
   @IsString()

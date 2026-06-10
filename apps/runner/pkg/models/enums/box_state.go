@@ -18,7 +18,6 @@ const (
 	BoxStateResizing        BoxState = "resizing"
 	BoxStateError           BoxState = "error"
 	BoxStateUnknown         BoxState = "unknown"
-	BoxStatePullingSnapshot BoxState = "pulling_snapshot"
 )
 
 func (s BoxState) String() string {

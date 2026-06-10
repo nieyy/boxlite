@@ -8,7 +8,6 @@ import { IsEnum, IsObject, IsOptional, IsString, IsNumber, IsBoolean, IsArray } 
 import { ApiPropertyOptional, ApiSchema } from '@nestjs/swagger'
 import { BoxClass } from '../enums/box-class.enum'
 import { BoxVolume } from './box.dto'
-import { CreateBuildInfoDto } from './create-build-info.dto'
 
 @ApiSchema({ name: 'CreateBox' })
 export class CreateBoxDto {
@@ -19,14 +18,6 @@ export class CreateBoxDto {
   @IsOptional()
   @IsString()
   name?: string
-
-  @ApiPropertyOptional({
-    description: 'The ID or name of the snapshot used for the box',
-    example: 'ubuntu-4vcpu-8ram-100gb',
-  })
-  @IsOptional()
-  @IsString()
-  snapshot?: string
 
   @ApiPropertyOptional({
     description: 'The user associated with the project',
@@ -143,15 +134,6 @@ export class CreateBoxDto {
   autoStopInterval?: number
 
   @ApiPropertyOptional({
-    description: 'Auto-archive interval in minutes (0 means the maximum interval will be used)',
-    example: 7 * 24 * 60,
-    type: 'integer',
-  })
-  @IsOptional()
-  @IsNumber()
-  autoArchiveInterval?: number
-
-  @ApiPropertyOptional({
     description:
       'Auto-delete interval in minutes (negative value means disabled, 0 means delete immediately upon stopping)',
     example: 30,
@@ -169,12 +151,4 @@ export class CreateBoxDto {
   @IsOptional()
   @IsArray()
   volumes?: BoxVolume[]
-
-  @ApiPropertyOptional({
-    description: 'Build information for the box',
-    type: CreateBuildInfoDto,
-  })
-  @IsOptional()
-  @IsObject()
-  buildInfo?: CreateBuildInfoDto
 }

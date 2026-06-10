@@ -16,10 +16,9 @@ import {
   HttpCode,
   UseGuards,
   Logger,
-  NotFoundException,
   Res,
 } from '@nestjs/common'
-import { ApiTags, ApiBearerAuth, ApiExcludeController } from '@nestjs/swagger'
+import { ApiTags, ApiBearerAuth, ApiResponse, ApiExcludeController } from '@nestjs/swagger'
 import { Response } from 'express'
 import { CombinedAuthGuard } from '../auth/combined-auth.guard'
 import { OrganizationResourceActionGuard } from '../organization/guards/organization-resource-action.guard'
@@ -36,12 +35,11 @@ import { boxToBoxResponse, createBoxToCreateBox } from './mappers/box-to-box.map
 import { Audit, MASKED_AUDIT_VALUE, TypedRequest } from '../audit/decorators/audit.decorator'
 import { AuditAction } from '../audit/enums/audit-action.enum'
 import { AuditTarget } from '../audit/enums/audit-target.enum'
-
 // Spec-first surface: the contract is openapi/box.openapi.yaml, not the
 // generated product spec (which `:prefix` routes would render invalid).
 @ApiExcludeController()
 @ApiTags('BoxLite REST')
-@Controller('v1/:prefix/boxes')
+@Controller(['v1/boxes', 'v1/:prefix/boxes'])
 @UseGuards(CombinedAuthGuard, OrganizationResourceActionGuard)
 @ApiBearerAuth()
 export class BoxliteBoxController {
@@ -54,6 +52,11 @@ export class BoxliteBoxController {
 
   @Post()
   @HttpCode(201)
+  @ApiResponse({
+    status: 201,
+    description: 'Box created',
+    type: BoxResponseDto,
+  })
   @Audit({
     action: AuditAction.CREATE,
     targetType: AuditTarget.BOX,
@@ -83,7 +86,8 @@ export class BoxliteBoxController {
   ): Promise<BoxResponseDto> {
     const organization = authContext.organization
     const createBoxDto = createBoxToCreateBox(dto)
-    let box = await this.boxService.createFromSnapshot(createBoxDto, organization)
+
+    let box = await this.boxService.createFromTemplate(createBoxDto, organization)
     if (box.state !== BoxState.STARTED) {
       box = await this.boxStateWaiter.waitForStarted(box.id, organization.id, 30)
     }
@@ -91,6 +95,11 @@ export class BoxliteBoxController {
   }
 
   @Get()
+  @ApiResponse({
+    status: 200,
+    description: 'List boxes',
+    type: ListBoxesResponseDto,
+  })
   async listBoxes(
     @AuthContext() authContext: OrganizationAuthContext,
     @Query('pageSize') pageSize?: string,
@@ -103,6 +112,11 @@ export class BoxliteBoxController {
   }
 
   @Get(':boxId')
+  @ApiResponse({
+    status: 200,
+    description: 'Box details',
+    type: BoxResponseDto,
+  })
   async getBox(
     @AuthContext() authContext: OrganizationAuthContext,
     @Param('boxId') boxId: string,
@@ -138,6 +152,11 @@ export class BoxliteBoxController {
   }
 
   @Post(':boxId/start')
+  @ApiResponse({
+    status: 201,
+    description: 'Box start requested',
+    type: BoxResponseDto,
+  })
   @Audit({
     action: AuditAction.START,
     targetType: AuditTarget.BOX,
@@ -164,6 +183,11 @@ export class BoxliteBoxController {
   }
 
   @Post(':boxId/stop')
+  @ApiResponse({
+    status: 201,
+    description: 'Box stop requested',
+    type: BoxResponseDto,
+  })
   @Audit({
     action: AuditAction.STOP,
     targetType: AuditTarget.BOX,
@@ -182,15 +206,7 @@ export class BoxliteBoxController {
   private isStartAlreadyInProgress(box: Box): boolean {
     return (
       box.desiredState === BoxDesiredState.STARTED &&
-      [
-        BoxState.UNKNOWN,
-        BoxState.CREATING,
-        BoxState.STARTING,
-        BoxState.RESTORING,
-        BoxState.PULLING_SNAPSHOT,
-        BoxState.BUILDING_SNAPSHOT,
-        BoxState.PENDING_BUILD,
-      ].includes(box.state)
+      [BoxState.UNKNOWN, BoxState.CREATING, BoxState.STARTING, BoxState.RESTORING].includes(box.state)
     )
   }
 }

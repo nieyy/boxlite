@@ -20,16 +20,12 @@ import { OrganizationUserService } from './services/organization-user.service'
 import { OrganizationInvitationService } from './services/organization-invitation.service'
 import { UserModule } from '../user/user.module'
 import { Box } from '../box/entities/box.entity'
-import { Snapshot } from '../box/entities/snapshot.entity'
 import { Volume } from '../box/entities/volume.entity'
 import { RedisLockProvider } from '../box/common/redis-lock.provider'
-import { SnapshotRunner } from '../box/entities/snapshot-runner.entity'
-import { OrganizationUsageService } from './services/organization-usage.service'
 import { DataSource } from 'typeorm'
 import { EventEmitter2 } from '@nestjs/event-emitter'
 import { BoxRepository } from '../box/repositories/box.repository'
 import { BoxLookupCacheInvalidationService } from '../box/services/box-lookup-cache-invalidation.service'
-import { RegionQuota } from './entities/region-quota.entity'
 import { RegionModule } from '../region/region.module'
 import { OrganizationRegionController } from './controllers/organization-region.controller'
 import { Region } from '../region/entities/region.entity'
@@ -45,10 +41,7 @@ import { EncryptionModule } from '../encryption/encryption.module'
       OrganizationUser,
       OrganizationInvitation,
       Box,
-      Snapshot,
       Volume,
-      SnapshotRunner,
-      RegionQuota,
       Region,
     ]),
     EncryptionModule,
@@ -65,7 +58,6 @@ import { EncryptionModule } from '../encryption/encryption.module'
     OrganizationRoleService,
     OrganizationUserService,
     OrganizationInvitationService,
-    OrganizationUsageService,
     RedisLockProvider,
     BoxLookupCacheInvalidationService,
     {
@@ -83,7 +75,6 @@ import { EncryptionModule } from '../encryption/encryption.module'
     OrganizationRoleService,
     OrganizationUserService,
     OrganizationInvitationService,
-    OrganizationUsageService,
   ],
 })
 export class OrganizationModule {}

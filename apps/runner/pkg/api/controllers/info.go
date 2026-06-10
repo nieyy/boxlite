@@ -48,7 +48,6 @@ func RunnerInfo(ctx *gin.Context) {
 			CurrentAllocatedCpu:          float64(metrics.AllocatedCPU),
 			CurrentAllocatedMemoryGiB:    float64(metrics.AllocatedMemoryGiB),
 			CurrentAllocatedDiskGiB:      float64(metrics.AllocatedDiskGiB),
-			CurrentSnapshotCount:         int(metrics.SnapshotCount),
 			CurrentStartedBoxes:          int64(metrics.StartedBoxCount),
 		},
 		AppVersion: internal.Version,

@@ -136,7 +136,6 @@ func (a *ApiServer) Start(ctx context.Context) error {
 		boxController.POST("/:boxId/destroy", controllers.Destroy)
 		boxController.POST("/:boxId/start", controllers.Start)
 		boxController.POST("/:boxId/stop", controllers.Stop)
-		boxController.POST("/:boxId/backup", controllers.CreateBackup(boxControllerLogger))
 		boxController.POST("/:boxId/resize", controllers.Resize)
 		boxController.POST("/:boxId/recover", controllers.Recover)
 		boxController.POST("/:boxId/is-recoverable", controllers.IsRecoverable)
@@ -145,19 +144,6 @@ func (a *ApiServer) Start(ctx context.Context) error {
 		// Add proxy endpoint within the box controller for toolbox
 		// Using Any() to handle all HTTP methods for the toolbox proxy
 		boxController.Any("/:boxId/toolbox/*path", controllers.ProxyRequest(boxControllerLogger))
-	}
-
-	snapshotControllerLogger := a.logger.With(slog.String("component", "snapshot_controller"))
-	snapshotController := protected.Group("/snapshots")
-	{
-		snapshotController.POST("/pull", controllers.PullSnapshot(ctx, snapshotControllerLogger))
-		snapshotController.POST("/build", controllers.BuildSnapshot(ctx, snapshotControllerLogger))
-		snapshotController.POST("/tag", controllers.TagImage)
-		snapshotController.GET("/exists", controllers.SnapshotExists)
-		snapshotController.GET("/info", controllers.GetSnapshotInfo)
-		snapshotController.POST("/remove", controllers.RemoveSnapshot(snapshotControllerLogger))
-		snapshotController.GET("/logs", controllers.GetBuildLogs(snapshotControllerLogger))
-		snapshotController.POST("/inspect", controllers.InspectSnapshotInRegistry)
 	}
 
 	// BoxLite REST API — exec, files, metrics

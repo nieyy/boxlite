@@ -16,13 +16,9 @@ import { Observable } from 'rxjs'
 import { tap } from 'rxjs/operators'
 import { PostHog } from 'posthog-node'
 import { BoxDto } from '../box/dto/box.dto'
-import { DockerRegistryDto } from '../docker-registry/dto/docker-registry.dto'
 import { CreateBoxDto } from '../box/dto/create-box.dto'
 import { Request } from 'express'
-import { CreateSnapshotDto } from '../box/dto/create-snapshot.dto'
-import { SnapshotDto } from '../box/dto/snapshot.dto'
 import { CreateOrganizationDto } from '../organization/dto/create-organization.dto'
-import { UpdateOrganizationQuotaDto } from '../organization/dto/update-organization-quota.dto'
 import { OrganizationDto } from '../organization/dto/organization.dto'
 import { UpdateOrganizationMemberAccessDto } from '../organization/dto/update-organization-member-access.dto'
 import { CreateOrganizationRoleDto } from '../organization/dto/create-organization-role.dto'
@@ -35,10 +31,12 @@ import { VolumeDto } from '../box/dto/volume.dto'
 import { CreateWorkspaceDto } from '../box/dto/create-workspace.deprecated.dto'
 import { WorkspaceDto } from '../box/dto/workspace.deprecated.dto'
 import { TypedConfigService } from '../config/typed-config.service'
-import { UpdateOrganizationRegionQuotaDto } from '../organization/dto/update-organization-region-quota.dto'
 import { UpdateOrganizationDefaultRegionDto } from '../organization/dto/update-organization-default-region.dto'
 
-type RequestWithUser = Request & { user?: { userId: string; organizationId: string } }
+type RequestWithUser = Request & {
+  user?: { userId: string; organizationId: string }
+  params: Record<string, string>
+}
 type CommonCaptureProps = {
   organizationId?: string
   distinctId: string
@@ -132,18 +130,7 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
           case '/api/api-keys':
             this.captureCreateApiKey(props)
             break
-          case '/api/snapshots':
-            this.captureCreateSnapshot(props, request.body, response)
-            break
-          case '/api/snapshots/:snapshotId/activate':
-            this.captureActivateSnapshot(props, request.params.snapshotId)
-            break
-          case '/api/snapshots/:snapshotId/deactivate':
-            this.captureDeactivateSnapshot(props, request.params.snapshotId)
-            break
-          case '/api/docker-registry':
-            this.captureCreateDockerRegistry(props, response)
-            break
+          // TODO(image-rewrite): /api/templates metrics removed with box_template.
           case '/api/box':
             this.captureCreateBox(props, request.body, response)
             break
@@ -152,6 +139,7 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
             break
           case '/api/box/:boxIdOrName/start':
           case '/api/workspace/:workspaceId/start':
+          case '/api/v1/boxes/:boxId/start':
           case '/api/v1/:prefix/boxes/:boxId/start':
             this.captureStartBox(
               props,
@@ -160,6 +148,7 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
             break
           case '/api/box/:boxIdOrName/stop':
           case '/api/workspace/:workspaceId/stop':
+          case '/api/v1/boxes/:boxId/stop':
           case '/api/v1/:prefix/boxes/:boxId/stop':
             this.captureStopBox(
               props,
@@ -169,13 +158,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
             break
           case '/api/box/:boxIdOrName/resize':
             this.captureResizeBox(props, request.params.boxIdOrName, request.body)
-            break
-          case '/api/box/:boxIdOrName/archive':
-          case '/api/workspace/:workspaceId/archive':
-            this.captureArchiveBox(props, request.params.boxIdOrName || request.params.workspaceId)
-            break
-          case '/api/box/:boxIdOrName/backup':
-            this.captureCreateBackup(props, request.params.boxIdOrName)
             break
           case '/api/box/:boxIdOrName/public/:isPublic':
           case '/api/workspace/:workspaceId/public/:isPublic':
@@ -188,14 +170,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
           case '/api/box/:boxIdOrName/autostop/:interval':
           case '/api/workspace/:workspaceId/autostop/:interval':
             this.captureSetAutostopInterval(
-              props,
-              request.params.boxIdOrName || request.params.workspaceId,
-              parseInt(request.params.interval),
-            )
-            break
-          case '/api/box/:boxIdOrName/autoarchive/:interval':
-          case '/api/workspace/:workspaceId/autoarchive/:interval':
-            this.captureSetAutoArchiveInterval(
               props,
               request.params.boxIdOrName || request.params.workspaceId,
               parseInt(request.params.interval),
@@ -242,15 +216,14 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
         switch (request.route.path) {
           case '/api/box/:boxIdOrName':
           case '/api/workspace/:workspaceId':
+          case '/api/v1/boxes/:boxId':
           case '/api/v1/:prefix/boxes/:boxId':
             this.captureDeleteBox(
               props,
               request.params.boxIdOrName || request.params.workspaceId || request.params.boxId,
             )
             break
-          case '/api/snapshots/:snapshotId':
-            this.captureDeleteSnapshot(props, request.params.snapshotId)
-            break
+          // TODO(image-rewrite): /api/templates delete metrics removed with box_template.
           case '/api/organizations/:organizationId':
             this.captureDeleteOrganization(props, request.params.organizationId)
             break
@@ -296,17 +269,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
         switch (request.route.path) {
           case '/api/organizations/:organizationId/default-region':
             this.captureSetOrganizationDefaultRegion(props, request.params.organizationId, request.body)
-            break
-          case '/api/organizations/:organizationId/quota':
-            this.captureUpdateOrganizationQuota(props, request.params.organizationId, request.body)
-            break
-          case '/api/organizations/:organizationId/quota/:regionId':
-            this.captureUpdateOrganizationRegionQuota(
-              props,
-              request.params.organizationId,
-              request.params.regionId,
-              request.body,
-            )
             break
         }
         break
@@ -478,45 +440,7 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
     this.capture('api_api_key_created', props, 'api_api_key_creation_failed')
   }
 
-  private captureCreateDockerRegistry(props: CommonCaptureProps, response: DockerRegistryDto) {
-    this.capture('api_docker_registry_created', props, 'api_docker_registry_creation_failed', {
-      registry_name: response.name,
-      registry_url: response.url,
-    })
-  }
-
-  private captureCreateSnapshot(props: CommonCaptureProps, request: CreateSnapshotDto, response: SnapshotDto) {
-    this.capture('api_snapshot_created', props, 'api_snapshot_creation_failed', {
-      snapshot_id: response.id,
-      snapshot_name: request.name,
-      snapshot_image_name: request.imageName,
-      snapshot_entrypoint: request.entrypoint,
-      snapshot_cpu: request.cpu,
-      snapshot_gpu: request.gpu,
-      snapshot_memory: request.memory,
-      snapshot_disk: request.disk,
-      snapshot_is_build: request.buildInfo ? true : false,
-      snapshot_build_info_context_hashes_length: request.buildInfo?.contextHashes?.length,
-    })
-  }
-
-  private captureActivateSnapshot(props: CommonCaptureProps, snapshotId: string) {
-    this.capture('api_snapshot_activated', props, 'api_snapshot_activation_failed', {
-      snapshot_id: snapshotId,
-    })
-  }
-
-  private captureDeactivateSnapshot(props: CommonCaptureProps, snapshotId: string) {
-    this.capture('api_snapshot_deactivated', props, 'api_snapshot_deactivation_failed', {
-      snapshot_id: snapshotId,
-    })
-  }
-
-  private captureDeleteSnapshot(props: CommonCaptureProps, snapshotId: string) {
-    this.capture('api_snapshot_deleted', props, 'api_snapshot_deletion_failed', {
-      snapshot_id: snapshotId,
-    })
-  }
+  // TODO(image-rewrite): template create/activate/deactivate/delete metrics removed with box_template.
 
   private captureCreateBox(props: CommonCaptureProps, request: CreateBoxDto, response: BoxDto) {
     const envVarsLength = request.env ? Object.keys(request.env).length : 0
@@ -525,8 +449,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
       box_id: response.id,
       box_name_request: request.name,
       box_name: response.name,
-      box_snapshot_request: request.snapshot,
-      box_snapshot: response.snapshot,
       box_user_request: request.user,
       box_user: response.user,
       box_cpu_request: request.cpu,
@@ -541,8 +463,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
       box_target: response.target,
       box_auto_stop_interval_min_request: request.autoStopInterval,
       box_auto_stop_interval_min: response.autoStopInterval,
-      box_auto_archive_interval_min_request: request.autoArchiveInterval,
-      box_auto_archive_interval_min: response.autoArchiveInterval,
       box_auto_delete_interval_min_request: request.autoDeleteInterval,
       box_auto_delete_interval_min: response.autoDeleteInterval,
       box_public_request: request.public,
@@ -558,11 +478,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
       box_network_allow_list_set: !!response.networkAllowList,
     }
 
-    if (request.buildInfo) {
-      records['box_is_dynamic_build'] = true
-      records['box_build_info_context_hashes_length'] = request.buildInfo.contextHashes?.length
-    }
-
     this.capture('api_box_created', props, 'api_box_creation_failed', records)
   }
 
@@ -575,8 +490,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
 
     const records = {
       box_id: response.id,
-      box_snapshot_request: request.image,
-      box_snapshot: response.snapshot,
       box_user_request: request.user,
       box_user: response.user,
       box_cpu_request: request.cpu,
@@ -591,8 +504,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
       box_target: response.target,
       box_auto_stop_interval_min_request: request.autoStopInterval,
       box_auto_stop_interval_min: response.autoStopInterval,
-      box_auto_archive_interval_min_request: request.autoArchiveInterval,
-      box_auto_archive_interval_min: response.autoArchiveInterval,
       box_public_request: request.public,
       box_public: response.public,
       box_labels_request: request.labels,
@@ -600,11 +511,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
       box_env_vars_length_request: envVarsLength,
       box_volumes_length_request: request.volumes?.length,
       box_daemon_version: response.daemonVersion,
-    }
-
-    if (request.buildInfo) {
-      records['box_is_dynamic_build'] = true
-      records['box_build_info_context_hashes_length'] = request.buildInfo.contextHashes?.length
     }
 
     this.capture('api_box_created', props, 'api_box_creation_failed', records)
@@ -642,18 +548,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
     })
   }
 
-  private captureArchiveBox(props: CommonCaptureProps, boxId: string) {
-    this.capture('api_box_archived', props, 'api_box_archive_failed', {
-      box_id: boxId,
-    })
-  }
-
-  private captureCreateBackup(props: CommonCaptureProps, boxId: string) {
-    this.capture('api_box_backup_created', props, 'api_box_backup_creation_failed', {
-      box_id: boxId,
-    })
-  }
-
   private captureUpdatePublicStatus(props: CommonCaptureProps, boxId: string, isPublic: boolean) {
     this.capture('api_box_public_status_updated', props, 'api_box_public_status_update_failed', {
       box_id: boxId,
@@ -665,13 +559,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
     this.capture('api_box_autostop_interval_updated', props, 'api_box_autostop_interval_update_failed', {
       box_id: boxId,
       box_autostop_interval: interval,
-    })
-  }
-
-  private captureSetAutoArchiveInterval(props: CommonCaptureProps, boxId: string, interval: number) {
-    this.capture('api_box_autoarchive_interval_updated', props, 'api_box_autoarchive_interval_update_failed', {
-      box_id: boxId,
-      box_autoarchive_interval: interval,
     })
   }
 
@@ -716,7 +603,7 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
         name: request.name,
         created_at: response.createdAt,
         created_by: response.createdBy,
-        personal: response.personal,
+        is_default_for_authenticated_user: response.isDefaultForAuthenticatedUser,
         environment: this.configService.get('posthog.environment'),
       },
     })
@@ -742,37 +629,6 @@ export class MetricsInterceptor implements NestInterceptor, OnApplicationShutdow
     this.capture('api_organization_default_region_set', props, 'api_organization_default_region_set_failed', {
       organization_id: organizationId,
       organization_default_region_id: request.defaultRegionId,
-    })
-  }
-
-  private captureUpdateOrganizationQuota(
-    props: CommonCaptureProps,
-    organizationId: string,
-    request: UpdateOrganizationQuotaDto,
-  ) {
-    this.capture('api_organization_quota_updated', props, 'api_organization_quota_update_failed', {
-      organization_id: organizationId,
-      organization_max_cpu_per_box: request.maxCpuPerBox,
-      organization_max_memory_per_box_mb: request.maxMemoryPerBox ? request.maxMemoryPerBox * 1024 : null,
-      organization_max_disk_per_box_gb: request.maxDiskPerBox,
-      organization_snapshot_quota: request.snapshotQuota,
-      organization_max_snapshot_size_mb: request.maxSnapshotSize ? request.maxSnapshotSize * 1024 : null,
-      organization_volume_quota: request.volumeQuota,
-    })
-  }
-
-  private captureUpdateOrganizationRegionQuota(
-    props: CommonCaptureProps,
-    organizationId: string,
-    regionId: string,
-    request: UpdateOrganizationRegionQuotaDto,
-  ) {
-    this.capture('api_organization_region_quota_updated', props, 'api_organization_region_quota_update_failed', {
-      organization_id: organizationId,
-      organization_region_id: regionId,
-      organization_region_total_cpu_quota: request.totalCpuQuota,
-      organization_region_total_memory_quota_mb: request.totalMemoryQuota ? request.totalMemoryQuota * 1024 : null,
-      organization_region_total_disk_quota_gb: request.totalDiskQuota,
     })
   }
 

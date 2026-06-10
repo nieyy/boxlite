@@ -25,7 +25,14 @@ export class OrganizationDto {
   createdBy: string
 
   @ApiProperty({
-    description: 'Personal organization flag',
+    description: 'Whether this organization is the authenticated user default organization',
+  })
+  isDefaultForAuthenticatedUser: boolean
+
+  @ApiProperty({
+    description:
+      'Deprecated alias for isDefaultForAuthenticatedUser. Kept for backward compatibility with older REST clients.',
+    deprecated: true,
   })
   personal: boolean
 
@@ -80,10 +87,10 @@ export class OrganizationDto {
   maxDiskPerBox: number
 
   @ApiProperty({
-    description: 'Time in minutes before an unused snapshot is deactivated',
+    description: 'Time in minutes before an unused template is deactivated',
     default: 20160,
   })
-  snapshotDeactivationTimeoutMinutes: number
+  templateDeactivationTimeoutMinutes: number
 
   @ApiProperty({
     description: 'Box default network block all',
@@ -137,7 +144,7 @@ export class OrganizationDto {
   })
   boxLifecycleRateLimitTtlSeconds: number | null
 
-  static fromOrganization(organization: Organization): OrganizationDto {
+  static fromOrganization(organization: Organization, isDefaultForAuthenticatedUser = false): OrganizationDto {
     const experimentalConfig = organization._experimentalConfig
     if (experimentalConfig && experimentalConfig.otel && experimentalConfig.otel.headers) {
       experimentalConfig.otel.headers = Object.entries(experimentalConfig.otel.headers).reduce(
@@ -153,7 +160,8 @@ export class OrganizationDto {
       id: organization.id,
       name: organization.name,
       createdBy: organization.createdBy,
-      personal: organization.personal,
+      isDefaultForAuthenticatedUser,
+      personal: isDefaultForAuthenticatedUser,
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,
       suspended: organization.suspended,
@@ -164,7 +172,7 @@ export class OrganizationDto {
       maxCpuPerBox: organization.maxCpuPerBox,
       maxMemoryPerBox: organization.maxMemoryPerBox,
       maxDiskPerBox: organization.maxDiskPerBox,
-      snapshotDeactivationTimeoutMinutes: organization.snapshotDeactivationTimeoutMinutes,
+      templateDeactivationTimeoutMinutes: organization.templateDeactivationTimeoutMinutes,
       boxLimitedNetworkEgress: organization.boxLimitedNetworkEgress,
       defaultRegionId: organization.defaultRegionId,
       authenticatedRateLimit: organization.authenticatedRateLimit,

@@ -13,27 +13,6 @@ import (
 	apiclient "github.com/boxlite-ai/boxlite/libs/api-client-go"
 )
 
-func AwaitSnapshotState(ctx context.Context, apiClient *apiclient.APIClient, name string, state apiclient.SnapshotState) error {
-	for {
-		snapshot, res, err := apiClient.SnapshotsAPI.GetSnapshot(ctx, name).Execute()
-		if err != nil {
-			return apiclient_cli.HandleErrorResponse(res, err)
-		}
-
-		switch snapshot.State {
-		case state:
-			return nil
-		case apiclient.SNAPSHOTSTATE_ERROR, apiclient.SNAPSHOTSTATE_BUILD_FAILED:
-			if !snapshot.ErrorReason.IsSet() {
-				return fmt.Errorf("snapshot processing failed")
-			}
-			return fmt.Errorf("snapshot processing failed: %s", *snapshot.ErrorReason.Get())
-		}
-
-		time.Sleep(time.Second)
-	}
-}
-
 func AwaitBoxState(ctx context.Context, apiClient *apiclient.APIClient, targetBox string, state apiclient.BoxState) error {
 	for {
 		box, res, err := apiClient.BoxAPI.GetBox(ctx, targetBox).Execute()

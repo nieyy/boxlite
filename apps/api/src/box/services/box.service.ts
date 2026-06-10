@@ -17,9 +17,6 @@ import { RunnerService } from './runner.service'
 import { BoxError } from '../../exceptions/box-error.exception'
 import { BadRequestError } from '../../exceptions/bad-request.exception'
 import { Cron, CronExpression } from '@nestjs/schedule'
-import { BackupState } from '../enums/backup-state.enum'
-import { Snapshot } from '../entities/snapshot.entity'
-import { SnapshotState } from '../enums/snapshot-state.enum'
 import { BOX_WARM_POOL_UNASSIGNED_ORGANIZATION } from '../constants/box.constants'
 import { BoxWarmPoolService } from './box-warm-pool.service'
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter'
@@ -29,23 +26,17 @@ import { Runner } from '../entities/runner.entity'
 import { Organization } from '../../organization/entities/organization.entity'
 import { BoxEvents } from '../constants/box-events.constants'
 import { BoxStateUpdatedEvent } from '../events/box-state-updated.event'
-import { BuildInfo } from '../entities/build-info.entity'
-import { generateBuildInfoHash as generateBuildSnapshotRef } from '../entities/build-info.entity'
-import { BoxBackupCreatedEvent } from '../events/box-backup-created.event'
 import { BoxDestroyedEvent } from '../events/box-destroyed.event'
 import { BoxStartedEvent } from '../events/box-started.event'
 import { BoxStoppedEvent } from '../events/box-stopped.event'
-import { BoxArchivedEvent } from '../events/box-archived.event'
 import { OrganizationService } from '../../organization/services/organization.service'
 import { OrganizationEvents } from '../../organization/constants/organization-events.constant'
 import { OrganizationSuspendedBoxStoppedEvent } from '../../organization/events/organization-suspended-box-stopped.event'
 import { TypedConfigService } from '../../config/typed-config.service'
 import { WarmPool } from '../entities/warm-pool.entity'
 import { BoxDto, BoxVolume } from '../dto/box.dto'
-import { isValidUuid } from '../../common/utils/uuid'
 import { RunnerAdapterFactory } from '../runner-adapter/runnerAdapter'
 import { validateNetworkAllowList } from '../utils/network-validation.util'
-import { OrganizationUsageService } from '../../organization/services/organization-usage.service'
 import { SshAccess } from '../entities/ssh-access.entity'
 import { SshAccessDto, SshAccessValidationDto } from '../dto/ssh-access.dto'
 import { VolumeService } from './volume.service'
@@ -58,11 +49,6 @@ import {
 } from '../dto/list-boxes-query.dto'
 import { createRangeFilter } from '../../common/utils/range-filter'
 import { LogExecution } from '../../common/decorators/log-execution.decorator'
-import {
-  UPGRADE_TIER_MESSAGE,
-  ARCHIVE_BOXES_MESSAGE,
-  PER_BOX_LIMIT_MESSAGE,
-} from '../../common/constants/error-messages'
 import { RedisLockProvider } from '../common/redis-lock.provider'
 import { customAlphabet as customNanoid, nanoid, urlAlphabet } from 'nanoid'
 import { WithInstrumentation } from '../../common/decorators/otel.decorator'
@@ -70,9 +56,6 @@ import { validateMountPaths, validateSubpaths } from '../utils/volume-mount-path
 import { BoxRepository } from '../repositories/box.repository'
 import { PortPreviewUrlDto, SignedPortPreviewUrlDto } from '../dto/port-preview-url.dto'
 import { RegionService } from '../../region/services/region.service'
-import { DefaultRegionRequiredException } from '../../organization/exceptions/DefaultRegionRequiredException'
-import { SnapshotService } from './snapshot.service'
-import { RegionType } from '../../region/enums/region-type.enum'
 import { BoxCreatedEvent } from '../events/box-create.event'
 import { InjectRedis } from '@nestjs-modules/ioredis'
 import { Redis } from 'ioredis'
@@ -80,8 +63,10 @@ import {
   BOX_LOOKUP_CACHE_TTL_MS,
   BOX_ORG_ID_CACHE_TTL_MS,
   TOOLBOX_PROXY_URL_CACHE_TTL_S,
+  boxLookupCacheKeyByBoxId,
   boxLookupCacheKeyById,
   boxLookupCacheKeyByName,
+  boxOrgIdCacheKeyByBoxId,
   boxOrgIdCacheKeyById,
   boxOrgIdCacheKeyByName,
   toolboxProxyUrlCacheKey,
@@ -90,10 +75,12 @@ import { BoxLookupCacheInvalidationService } from './box-lookup-cache-invalidati
 import { Region } from '../../region/entities/region.entity'
 import { BoxActivityService } from './box-activity.service'
 
-const DEFAULT_CPU = 1
-const DEFAULT_MEMORY = 1
-const DEFAULT_DISK = 3
-const DEFAULT_GPU = 0
+// TODO(image-rewrite): resource defaults previously came from box_template; these mirror the
+// Box entity column defaults until image/template resolution is rebuilt.
+const DEFAULT_BOX_CPU = 2
+const DEFAULT_BOX_MEM = 4
+const DEFAULT_BOX_DISK = 10
+const DEFAULT_BOX_GPU = 0
 
 @Injectable()
 export class BoxService {
@@ -101,12 +88,8 @@ export class BoxService {
 
   constructor(
     private readonly boxRepository: BoxRepository,
-    @InjectRepository(Snapshot)
-    private readonly snapshotRepository: Repository<Snapshot>,
     @InjectRepository(Runner)
     private readonly runnerRepository: Repository<Runner>,
-    @InjectRepository(BuildInfo)
-    private readonly buildInfoRepository: Repository<BuildInfo>,
     @InjectRepository(SshAccess)
     private readonly sshAccessRepository: Repository<SshAccess>,
     private readonly runnerService: RunnerService,
@@ -116,11 +99,9 @@ export class BoxService {
     private readonly eventEmitter: EventEmitter2,
     private readonly organizationService: OrganizationService,
     private readonly runnerAdapterFactory: RunnerAdapterFactory,
-    private readonly organizationUsageService: OrganizationUsageService,
     private readonly redisLockProvider: RedisLockProvider,
     @InjectRedis() private readonly redis: Redis,
     private readonly regionService: RegionService,
-    private readonly snapshotService: SnapshotService,
     private readonly boxLookupCacheInvalidationService: BoxLookupCacheInvalidationService,
     private readonly boxActivityService: BoxActivityService,
   ) {}
@@ -130,176 +111,9 @@ export class BoxService {
   }
 
   private assertBoxNotErrored(box: Box): void {
-    if ([BoxState.ERROR, BoxState.BUILD_FAILED].includes(box.state)) {
+    if (box.state === BoxState.ERROR) {
       throw new BoxError('Box is in an errored state')
     }
-  }
-
-  private async validateOrganizationQuotas(
-    organization: Organization,
-    region: Region,
-    cpu: number,
-    memory: number,
-    disk: number,
-    excludeBoxId?: string,
-  ): Promise<{
-    pendingCpuIncremented: boolean
-    pendingMemoryIncremented: boolean
-    pendingDiskIncremented: boolean
-  }> {
-    // validate per-box quotas
-    if (cpu > organization.maxCpuPerBox) {
-      throw new ForbiddenException(
-        `CPU request ${cpu} exceeds maximum allowed per box (${organization.maxCpuPerBox}).\n${PER_BOX_LIMIT_MESSAGE}`,
-      )
-    }
-    if (memory > organization.maxMemoryPerBox) {
-      throw new ForbiddenException(
-        `Memory request ${memory}GB exceeds maximum allowed per box (${organization.maxMemoryPerBox}GB).\n${PER_BOX_LIMIT_MESSAGE}`,
-      )
-    }
-    if (disk > organization.maxDiskPerBox) {
-      throw new ForbiddenException(
-        `Disk request ${disk}GB exceeds maximum allowed per box (${organization.maxDiskPerBox}GB).\n${PER_BOX_LIMIT_MESSAGE}`,
-      )
-    }
-
-    // e.g. region belonging to an organization
-    if (!region.enforceQuotas) {
-      return {
-        pendingCpuIncremented: false,
-        pendingMemoryIncremented: false,
-        pendingDiskIncremented: false,
-      }
-    }
-
-    const regionQuota = await this.organizationService.getRegionQuota(organization.id, region.id)
-
-    if (!regionQuota) {
-      if (region.regionType === RegionType.SHARED) {
-        // region is public, but the organization does not have a quota for it
-        throw new ForbiddenException(`Region ${region.id} is not available to the organization`)
-      } else {
-        // region is not public, respond as if the region was not found
-        throw new NotFoundException('Region not found')
-      }
-    }
-
-    // validate usage quotas
-    const {
-      cpuIncremented: pendingCpuIncremented,
-      memoryIncremented: pendingMemoryIncremented,
-      diskIncremented: pendingDiskIncremented,
-    } = await this.organizationUsageService.incrementPendingBoxUsage(
-      organization.id,
-      region.id,
-      cpu,
-      memory,
-      disk,
-      excludeBoxId,
-    )
-
-    const usageOverview = await this.organizationUsageService.getBoxUsageOverview(
-      organization.id,
-      region.id,
-      excludeBoxId,
-    )
-
-    try {
-      const upgradeTierMessage = UPGRADE_TIER_MESSAGE(this.configService.getOrThrow('dashboardUrl'))
-
-      if (usageOverview.currentCpuUsage + usageOverview.pendingCpuUsage > regionQuota.totalCpuQuota) {
-        throw new ForbiddenException(
-          `Total CPU limit exceeded. Maximum allowed: ${regionQuota.totalCpuQuota}.\n${upgradeTierMessage}`,
-        )
-      }
-
-      if (usageOverview.currentMemoryUsage + usageOverview.pendingMemoryUsage > regionQuota.totalMemoryQuota) {
-        throw new ForbiddenException(
-          `Total memory limit exceeded. Maximum allowed: ${regionQuota.totalMemoryQuota}GiB.\n${upgradeTierMessage}`,
-        )
-      }
-
-      if (usageOverview.currentDiskUsage + usageOverview.pendingDiskUsage > regionQuota.totalDiskQuota) {
-        throw new ForbiddenException(
-          `Total disk limit exceeded. Maximum allowed: ${regionQuota.totalDiskQuota}GiB.\n${ARCHIVE_BOXES_MESSAGE}\n${upgradeTierMessage}`,
-        )
-      }
-    } catch (error) {
-      await this.rollbackPendingUsage(
-        organization.id,
-        region.id,
-        pendingCpuIncremented ? cpu : undefined,
-        pendingMemoryIncremented ? memory : undefined,
-        pendingDiskIncremented ? disk : undefined,
-      )
-      throw error
-    }
-
-    return {
-      pendingCpuIncremented,
-      pendingMemoryIncremented,
-      pendingDiskIncremented,
-    }
-  }
-
-  async rollbackPendingUsage(
-    organizationId: string,
-    regionId: string,
-    pendingCpuIncrement?: number,
-    pendingMemoryIncrement?: number,
-    pendingDiskIncrement?: number,
-  ): Promise<void> {
-    if (!pendingCpuIncrement && !pendingMemoryIncrement && !pendingDiskIncrement) {
-      return
-    }
-
-    try {
-      await this.organizationUsageService.decrementPendingBoxUsage(
-        organizationId,
-        regionId,
-        pendingCpuIncrement,
-        pendingMemoryIncrement,
-        pendingDiskIncrement,
-      )
-    } catch (error) {
-      this.logger.error(`Error rolling back pending box usage: ${error}`)
-    }
-  }
-
-  async archive(boxIdOrName: string, organizationId?: string): Promise<Box> {
-    const box = await this.findOneByIdOrName(boxIdOrName, organizationId)
-
-    this.assertBoxNotErrored(box)
-
-    if (String(box.state) !== String(box.desiredState)) {
-      throw new BoxError('State change in progress')
-    }
-
-    if (box.state !== BoxState.STOPPED) {
-      throw new BoxError('Box is not stopped')
-    }
-
-    if (box.pending) {
-      throw new BoxError('Box state change in progress')
-    }
-
-    if (box.autoDeleteInterval === 0) {
-      throw new BoxError('Ephemeral boxes cannot be archived')
-    }
-
-    const updateData: Partial<Box> = {
-      state: BoxState.ARCHIVING,
-      desiredState: BoxDesiredState.ARCHIVED,
-    }
-
-    const updatedBox = await this.boxRepository.updateWhere(box.id, {
-      updateData,
-      whereCondition: { pending: false, state: BoxState.STOPPED },
-    })
-
-    this.eventEmitter.emit(BoxEvents.ARCHIVED, new BoxArchivedEvent(updatedBox))
-    return updatedBox
   }
 
   async createForWarmPool(warmPoolItem: WarmPool): Promise<Box> {
@@ -308,7 +122,6 @@ export class BoxService {
     box.organizationId = BOX_WARM_POOL_UNASSIGNED_ORGANIZATION
 
     box.class = warmPoolItem.class
-    box.snapshot = warmPoolItem.snapshot
     //  TODO: default user should be configurable
     box.osUser = 'boxlite'
     box.env = warmPoolItem.env || {}
@@ -318,20 +131,10 @@ export class BoxService {
     box.mem = warmPoolItem.mem
     box.disk = warmPoolItem.disk
 
-    const snapshot = await this.snapshotRepository.findOne({
-      where: [
-        { organizationId: box.organizationId, name: box.snapshot, state: SnapshotState.ACTIVE },
-        { general: true, name: box.snapshot, state: SnapshotState.ACTIVE },
-      ],
-    })
-    if (!snapshot) {
-      throw new BadRequestError(`Snapshot ${box.snapshot} not found while creating warm pool box`)
-    }
-
+    // TODO(image-rewrite): box image/artifact resolution removed with box_template; rebuild here.
     const runner = await this.runnerService.getRandomAvailableRunner({
       regions: [box.region],
       boxClass: box.class,
-      snapshotRef: snapshot.ref,
     })
 
     box.runnerId = runner.id
@@ -341,125 +144,24 @@ export class BoxService {
     return box
   }
 
-  async createFromSnapshot(
-    createBoxDto: CreateBoxDto,
-    organization: Organization,
-    useBoxResourceParams_deprecated?: boolean,
-  ): Promise<BoxDto> {
-    let pendingCpuIncrement: number | undefined
-    let pendingMemoryIncrement: number | undefined
-    let pendingDiskIncrement: number | undefined
-
+  private async createBoxInternal(createBoxDto: CreateBoxDto, organization: Organization): Promise<BoxDto> {
     const region = await this.getValidatedOrDefaultRegion(organization, createBoxDto.target)
 
     try {
       const boxClass = this.getValidatedOrDefaultClass(createBoxDto.class)
 
-      let snapshotIdOrName = createBoxDto.snapshot
-
-      if (!createBoxDto.snapshot?.trim()) {
-        snapshotIdOrName = this.configService.getOrThrow('defaultSnapshot')
-      }
-
-      const snapshotFilter: FindOptionsWhere<Snapshot>[] = [
-        { organizationId: organization.id, name: snapshotIdOrName },
-        { general: true, name: snapshotIdOrName },
-      ]
-
-      if (isValidUuid(snapshotIdOrName)) {
-        snapshotFilter.push(
-          { organizationId: organization.id, id: snapshotIdOrName },
-          { general: true, id: snapshotIdOrName },
-        )
-      }
-
-      const snapshots = await this.snapshotRepository.find({
-        where: snapshotFilter,
-      })
-
-      if (snapshots.length === 0) {
-        throw new BadRequestError(
-          `Snapshot ${snapshotIdOrName} not found. Did you add it through the BoxLite Dashboard?`,
-        )
-      }
-
-      let snapshot = snapshots.find((s) => s.state === SnapshotState.ACTIVE)
-
-      if (!snapshot) {
-        snapshot = snapshots[0]
-      }
-
-      if (!(await this.snapshotService.isAvailableInRegion(snapshot.id, region.id))) {
-        throw new BadRequestError(`Snapshot ${snapshotIdOrName} is not available in region ${region.id}`)
-      }
-
-      if (snapshot.state !== SnapshotState.ACTIVE) {
-        throw new BadRequestError(`Snapshot ${snapshotIdOrName} is ${snapshot.state}`)
-      }
-
-      if (!snapshot.ref) {
-        throw new BadRequestError('Snapshot ref is not defined')
-      }
-
-      let cpu = snapshot.cpu
-      let mem = snapshot.mem
-      let disk = snapshot.disk
-      let gpu = snapshot.gpu
-
-      // Remove the deprecated behavior in a future release
-      if (useBoxResourceParams_deprecated) {
-        if (createBoxDto.cpu) {
-          cpu = createBoxDto.cpu
-        }
-        if (createBoxDto.memory) {
-          mem = createBoxDto.memory
-        }
-        if (createBoxDto.disk) {
-          disk = createBoxDto.disk
-        }
-        if (createBoxDto.gpu) {
-          gpu = createBoxDto.gpu
-        }
-      }
+      // TODO(image-rewrite): box_template lookup + artifact resolution removed; boxes can no
+      // longer resolve an image at create time. Resource sizing falls back to request values
+      // (or Box entity defaults). Rebuild image/template resolution here.
+      const cpu = createBoxDto.cpu ?? DEFAULT_BOX_CPU
+      const mem = createBoxDto.memory ?? DEFAULT_BOX_MEM
+      const disk = createBoxDto.disk ?? DEFAULT_BOX_DISK
+      const gpu = createBoxDto.gpu ?? DEFAULT_BOX_GPU
 
       this.organizationService.assertOrganizationIsNotSuspended(organization)
 
-      const { pendingCpuIncremented, pendingMemoryIncremented, pendingDiskIncremented } =
-        await this.validateOrganizationQuotas(organization, region, cpu, mem, disk)
-
-      if (pendingCpuIncremented) {
-        pendingCpuIncrement = cpu
-      }
-      if (pendingMemoryIncremented) {
-        pendingMemoryIncrement = mem
-      }
-      if (pendingDiskIncremented) {
-        pendingDiskIncrement = disk
-      }
-
-      if (!createBoxDto.volumes || createBoxDto.volumes.length === 0) {
-        const skipWarmPool = (await this.redis.exists(`warm-pool:skip:${snapshot.id}`)) === 1
-
-        if (!skipWarmPool) {
-          const warmPoolBox = await this.warmPoolService.fetchWarmPoolBox({
-            organizationId: organization.id,
-            snapshot,
-            target: region.id,
-            class: createBoxDto.class,
-            cpu: cpu,
-            mem: mem,
-            disk: disk,
-            gpu: gpu,
-            osUser: createBoxDto.user,
-            env: createBoxDto.env,
-            state: BoxState.STARTED,
-          })
-
-          if (warmPoolBox) {
-            return await this.assignWarmPoolBox(warmPoolBox, createBoxDto, organization)
-          }
-        }
-      } else {
+      // TODO(image-rewrite): warm-pool reuse path removed with box_template; rebuild here.
+      if (createBoxDto.volumes && createBoxDto.volumes.length > 0) {
         const volumeIdOrNames = createBoxDto.volumes.map((v) => v.volumeId)
         await this.volumeService.validateVolumes(organization.id, volumeIdOrNames)
       }
@@ -467,7 +169,6 @@ export class BoxService {
       const runner = await this.runnerService.getRandomAvailableRunner({
         regions: [region.id],
         boxClass,
-        snapshotRef: snapshot.ref,
       })
 
       const box = new Box(region.id, createBoxDto.name)
@@ -476,7 +177,6 @@ export class BoxService {
 
       //  TODO: make configurable
       box.class = boxClass
-      box.snapshot = snapshot.name
       //  TODO: default user should be configurable
       box.osUser = createBoxDto.user || 'boxlite'
       box.env = createBoxDto.env || {}
@@ -501,10 +201,6 @@ export class BoxService {
         box.autoStopInterval = this.resolveAutoStopInterval(createBoxDto.autoStopInterval)
       }
 
-      if (createBoxDto.autoArchiveInterval !== undefined) {
-        box.autoArchiveInterval = this.resolveAutoArchiveInterval(createBoxDto.autoArchiveInterval)
-      }
-
       if (createBoxDto.autoDeleteInterval !== undefined) {
         box.autoDeleteInterval = createBoxDto.autoDeleteInterval
       }
@@ -524,20 +220,16 @@ export class BoxService {
 
       return this.toBoxDto(insertedBox)
     } catch (error) {
-      await this.rollbackPendingUsage(
-        organization.id,
-        region.id,
-        pendingCpuIncrement,
-        pendingMemoryIncrement,
-        pendingDiskIncrement,
-      )
-
       if (error.code === '23505') {
         throw new ConflictException(`Box with name ${createBoxDto.name} already exists`)
       }
 
       throw error
     }
+  }
+
+  async createFromTemplate(createBoxDto: CreateBoxDto, organization: Organization): Promise<BoxDto> {
+    return this.createBoxInternal(createBoxDto, organization)
   }
 
   private async assignWarmPoolBox(
@@ -559,10 +251,6 @@ export class BoxService {
 
     if (createBoxDto.autoStopInterval !== undefined) {
       updateData.autoStopInterval = this.resolveAutoStopInterval(createBoxDto.autoStopInterval)
-    }
-
-    if (createBoxDto.autoArchiveInterval !== undefined) {
-      updateData.autoArchiveInterval = this.resolveAutoArchiveInterval(createBoxDto.autoArchiveInterval)
     }
 
     if (createBoxDto.autoDeleteInterval !== undefined) {
@@ -603,7 +291,8 @@ export class BoxService {
 
     // Defensive invalidation of orgId cache since the box moved from unassigned to a real organization
     this.boxLookupCacheInvalidationService.invalidateOrgId({
-      boxId: warmPoolBox.id,
+      id: warmPoolBox.id,
+      boxId: warmPoolBox.boxId,
       organizationId: organization.id,
       name: warmPoolBox.name,
       previousOrganizationId: BOX_WARM_POOL_UNASSIGNED_ORGANIZATION,
@@ -615,165 +304,6 @@ export class BoxService {
       new BoxStateUpdatedEvent(updatedBox, BoxState.STARTED, BoxState.STARTED),
     )
     return this.toBoxDto(updatedBox)
-  }
-
-  async createFromBuildInfo(createBoxDto: CreateBoxDto, organization: Organization): Promise<BoxDto> {
-    let pendingCpuIncrement: number | undefined
-    let pendingMemoryIncrement: number | undefined
-    let pendingDiskIncrement: number | undefined
-
-    const region = await this.getValidatedOrDefaultRegion(organization, createBoxDto.target)
-
-    try {
-      const boxClass = this.getValidatedOrDefaultClass(createBoxDto.class)
-
-      const cpu = createBoxDto.cpu || DEFAULT_CPU
-      const mem = createBoxDto.memory || DEFAULT_MEMORY
-      const disk = createBoxDto.disk || DEFAULT_DISK
-      const gpu = createBoxDto.gpu || DEFAULT_GPU
-
-      this.organizationService.assertOrganizationIsNotSuspended(organization)
-
-      const { pendingCpuIncremented, pendingMemoryIncremented, pendingDiskIncremented } =
-        await this.validateOrganizationQuotas(organization, region, cpu, mem, disk)
-
-      if (pendingCpuIncremented) {
-        pendingCpuIncrement = cpu
-      }
-      if (pendingMemoryIncremented) {
-        pendingMemoryIncrement = mem
-      }
-      if (pendingDiskIncremented) {
-        pendingDiskIncrement = disk
-      }
-
-      if (createBoxDto.volumes && createBoxDto.volumes.length > 0) {
-        const volumeIdOrNames = createBoxDto.volumes.map((v) => v.volumeId)
-        await this.volumeService.validateVolumes(organization.id, volumeIdOrNames)
-      }
-
-      const box = new Box(region.id, createBoxDto.name)
-
-      box.organizationId = organization.id
-
-      box.class = boxClass
-      box.osUser = createBoxDto.user || 'boxlite'
-      box.env = createBoxDto.env || {}
-      box.labels = createBoxDto.labels || {}
-
-      box.cpu = cpu
-      box.gpu = gpu
-      box.mem = mem
-      box.disk = disk
-      box.public = createBoxDto.public || false
-
-      if (createBoxDto.networkBlockAll !== undefined) {
-        box.networkBlockAll = createBoxDto.networkBlockAll
-      }
-
-      if (createBoxDto.networkAllowList !== undefined) {
-        box.networkAllowList = this.resolveNetworkAllowList(createBoxDto.networkAllowList)
-      }
-
-      if (createBoxDto.autoStopInterval !== undefined) {
-        box.autoStopInterval = this.resolveAutoStopInterval(createBoxDto.autoStopInterval)
-      }
-
-      if (createBoxDto.autoArchiveInterval !== undefined) {
-        box.autoArchiveInterval = this.resolveAutoArchiveInterval(createBoxDto.autoArchiveInterval)
-      }
-
-      if (createBoxDto.autoDeleteInterval !== undefined) {
-        box.autoDeleteInterval = createBoxDto.autoDeleteInterval
-      }
-
-      if (createBoxDto.volumes !== undefined) {
-        box.volumes = this.resolveVolumes(createBoxDto.volumes)
-      }
-
-      const buildInfoSnapshotRef = generateBuildSnapshotRef(
-        createBoxDto.buildInfo.dockerfileContent,
-        createBoxDto.buildInfo.contextHashes,
-      )
-
-      // Check if buildInfo with the same snapshotRef already exists
-      const existingBuildInfo = await this.buildInfoRepository.findOne({
-        where: { snapshotRef: buildInfoSnapshotRef },
-      })
-
-      if (existingBuildInfo) {
-        box.buildInfo = existingBuildInfo
-        if (await this.redisLockProvider.lock(`build-info:${existingBuildInfo.snapshotRef}:update`, 60)) {
-          await this.buildInfoRepository.update(box.buildInfo.snapshotRef, { lastUsedAt: new Date() })
-        }
-      } else {
-        const buildInfoEntity = this.buildInfoRepository.create({
-          ...createBoxDto.buildInfo,
-        })
-        await this.buildInfoRepository.save(buildInfoEntity)
-        box.buildInfo = buildInfoEntity
-      }
-
-      let runner: Runner
-
-      try {
-        const declarativeBuildScoreThreshold = this.configService.get('runnerScore.thresholds.declarativeBuild')
-        runner = await this.runnerService.getRandomAvailableRunner({
-          regions: [box.region],
-          boxClass: box.class,
-          snapshotRef: box.buildInfo.snapshotRef,
-          ...(declarativeBuildScoreThreshold !== undefined && {
-            availabilityScoreThreshold: declarativeBuildScoreThreshold,
-          }),
-        })
-        box.runnerId = runner.id
-      } catch (error) {
-        if (error instanceof BadRequestError == false || error.message !== 'No available runners' || !box.buildInfo) {
-          throw error
-        }
-        box.state = BoxState.PENDING_BUILD
-      }
-
-      box.pending = true
-
-      const insertedBox = await this.boxRepository.insert(box)
-
-      this.eventEmitter
-        .emitAsync(BoxEvents.CREATED, new BoxCreatedEvent(insertedBox))
-        .catch((err) => this.logger.error('Failed to emit BoxCreatedEvent', err))
-
-      return this.toBoxDto(insertedBox)
-    } catch (error) {
-      await this.rollbackPendingUsage(
-        organization.id,
-        region.id,
-        pendingCpuIncrement,
-        pendingMemoryIncrement,
-        pendingDiskIncrement,
-      )
-
-      if (error.code === '23505') {
-        throw new ConflictException(`Box with name ${createBoxDto.name} already exists`)
-      }
-
-      throw error
-    }
-  }
-
-  async createBackup(boxIdOrName: string, organizationId?: string): Promise<Box> {
-    const box = await this.findOneByIdOrName(boxIdOrName, organizationId)
-
-    if (box.autoDeleteInterval === 0) {
-      throw new BoxError('Ephemeral boxes cannot be backed up')
-    }
-
-    if (![BackupState.COMPLETED, BackupState.NONE].includes(box.backupState)) {
-      throw new BoxError('Box backup is already in progress')
-    }
-
-    this.eventEmitter.emit(BoxEvents.BACKUP_CREATED, new BoxBackupCreatedEvent(box))
-
-    return box
   }
 
   async findAllDeprecated(
@@ -789,11 +319,11 @@ export class BoxService {
     const where: FindOptionsWhere<Box>[] = [
       {
         ...baseFindOptions,
-        state: Not(In([BoxState.DESTROYED, BoxState.ERROR, BoxState.BUILD_FAILED])),
+        state: Not(In([BoxState.DESTROYED, BoxState.ERROR])),
       },
       {
         ...baseFindOptions,
-        state: In([BoxState.ERROR, BoxState.BUILD_FAILED]),
+        state: BoxState.ERROR,
         ...(includeErroredDestroyed ? {} : { desiredState: Not(BoxDesiredState.DESTROYED) }),
       },
     ]
@@ -811,7 +341,6 @@ export class BoxService {
       labels?: { [key: string]: string }
       includeErroredDestroyed?: boolean
       states?: BoxState[]
-      snapshots?: string[]
       regionIds?: string[]
       minCpu?: number
       maxCpu?: number
@@ -836,7 +365,6 @@ export class BoxService {
       labels,
       includeErroredDestroyed,
       states,
-      snapshots,
       regionIds,
       minCpu,
       maxCpu,
@@ -853,10 +381,7 @@ export class BoxService {
 
     const baseFindOptions: FindOptionsWhere<Box> = {
       organizationId,
-      ...(id ? { id: ILike(`${id}%`) } : {}),
-      ...(name ? { name: ILike(`${name}%`) } : {}),
       ...(labels ? { labels: JsonContains(labels) } : {}),
-      ...(snapshots ? { snapshot: In(snapshots) } : {}),
       ...(regionIds ? { region: In(regionIds) } : {}),
     }
 
@@ -866,26 +391,31 @@ export class BoxService {
     baseFindOptions.updatedAt = createRangeFilter(lastEventAfter, lastEventBefore)
 
     const statesToInclude = (states || Object.values(BoxState)).filter((state) => state !== BoxState.DESTROYED)
-    const errorStates = [BoxState.ERROR, BoxState.BUILD_FAILED]
+    const errorStates = [BoxState.ERROR]
 
     const nonErrorStatesToInclude = statesToInclude.filter((state) => !errorStates.includes(state))
     const errorStatesToInclude = statesToInclude.filter((state) => errorStates.includes(state))
 
     const where: FindOptionsWhere<Box>[] = []
+    const searchFindOptions = this.getBoxSearchFindOptions(baseFindOptions, id, name)
 
     if (nonErrorStatesToInclude.length > 0) {
-      where.push({
-        ...baseFindOptions,
-        state: In(nonErrorStatesToInclude),
-      })
+      where.push(
+        ...searchFindOptions.map((findOptions) => ({
+          ...findOptions,
+          state: In(nonErrorStatesToInclude),
+        })),
+      )
     }
 
     if (errorStatesToInclude.length > 0) {
-      where.push({
-        ...baseFindOptions,
-        state: In(errorStatesToInclude),
-        ...(includeErroredDestroyed ? {} : { desiredState: Not(BoxDesiredState.DESTROYED) }),
-      })
+      where.push(
+        ...searchFindOptions.map((findOptions) => ({
+          ...findOptions,
+          state: In(errorStatesToInclude),
+          ...(includeErroredDestroyed ? {} : { desiredState: Not(BoxDesiredState.DESTROYED) }),
+        })),
+      )
     }
 
     const [items, total] = await this.boxRepository.findAndCount({
@@ -909,14 +439,48 @@ export class BoxService {
     }
   }
 
+  private getBoxSearchFindOptions(
+    baseFindOptions: FindOptionsWhere<Box>,
+    id?: string,
+    name?: string,
+  ): FindOptionsWhere<Box>[] {
+    const nameFilter = name ? { name: ILike(`${name}%`) } : {}
+
+    if (!id) {
+      return [
+        {
+          ...baseFindOptions,
+          ...nameFilter,
+        },
+      ]
+    }
+
+    const idFilter = ILike(`${id}%`)
+    return [
+      {
+        ...baseFindOptions,
+        ...nameFilter,
+        boxId: idFilter,
+      },
+      {
+        ...baseFindOptions,
+        ...nameFilter,
+        id: idFilter,
+      },
+      {
+        ...baseFindOptions,
+        ...nameFilter,
+        name: idFilter,
+      },
+    ]
+  }
+
   private getExpectedDesiredStateForState(state: BoxState): BoxDesiredState | undefined {
     switch (state) {
       case BoxState.STARTED:
         return BoxDesiredState.STARTED
       case BoxState.STOPPED:
         return BoxDesiredState.STOPPED
-      case BoxState.ARCHIVED:
-        return BoxDesiredState.ARCHIVED
       case BoxState.DESTROYED:
         return BoxDesiredState.DESTROYED
       default:
@@ -952,33 +516,44 @@ export class BoxService {
     return boxes
   }
 
-  async findOneByIdOrName(boxIdOrName: string, organizationId: string, returnDestroyed?: boolean): Promise<Box> {
+  async findOneByIdOrName(boxIdOrName: string, organizationId?: string, returnDestroyed?: boolean): Promise<Box> {
     const stateFilter = returnDestroyed ? {} : { state: Not(BoxState.DESTROYED) }
-    const relations: ['buildInfo'] = ['buildInfo']
+    const organizationFilter = organizationId ? { organizationId } : {}
 
-    // Try lookup by ID first
+    // Public Box ID is the user-facing stable identity. UUID and name are legacy-compatible fallbacks.
     let box = await this.boxRepository.findOne({
       where: {
-        id: boxIdOrName,
-        organizationId,
+        boxId: boxIdOrName,
+        ...organizationFilter,
         ...stateFilter,
       },
-      relations,
       cache: {
-        id: boxLookupCacheKeyById({ organizationId, returnDestroyed, boxId: boxIdOrName }),
+        id: boxLookupCacheKeyByBoxId({ organizationId, returnDestroyed, boxId: boxIdOrName }),
         milliseconds: BOX_LOOKUP_CACHE_TTL_MS,
       },
     })
 
-    // Fallback to lookup by name
+    if (!box) {
+      box = await this.boxRepository.findOne({
+        where: {
+          id: boxIdOrName,
+          ...organizationFilter,
+          ...stateFilter,
+        },
+        cache: {
+          id: boxLookupCacheKeyById({ organizationId, returnDestroyed, boxId: boxIdOrName }),
+          milliseconds: BOX_LOOKUP_CACHE_TTL_MS,
+        },
+      })
+    }
+
     if (!box) {
       box = await this.boxRepository.findOne({
         where: {
           name: boxIdOrName,
-          organizationId,
+          ...organizationFilter,
           ...stateFilter,
         },
-        relations,
         cache: {
           id: boxLookupCacheKeyByName({ organizationId, returnDestroyed, boxName: boxIdOrName }),
           milliseconds: BOX_LOOKUP_CACHE_TTL_MS,
@@ -986,13 +561,8 @@ export class BoxService {
       })
     }
 
-    if (
-      !box ||
-      (!returnDestroyed &&
-        [BoxState.ERROR, BoxState.BUILD_FAILED].includes(box.state) &&
-        box.desiredState === BoxDesiredState.DESTROYED)
-    ) {
-      throw new NotFoundException(`Box with ID or name ${boxIdOrName} not found`)
+    if (!box || (!returnDestroyed && box.state === BoxState.ERROR && box.desiredState === BoxDesiredState.DESTROYED)) {
+      throw new NotFoundException(`Box with Box ID, UUID, or name ${boxIdOrName} not found`)
     }
 
     return box
@@ -1006,12 +576,7 @@ export class BoxService {
       },
     })
 
-    if (
-      !box ||
-      (!returnDestroyed &&
-        [BoxState.ERROR, BoxState.BUILD_FAILED].includes(box.state) &&
-        box.desiredState === BoxDesiredState.DESTROYED)
-    ) {
+    if (!box || (!returnDestroyed && box.state === BoxState.ERROR && box.desiredState === BoxDesiredState.DESTROYED)) {
       throw new NotFoundException(`Box with ID ${boxId} not found`)
     }
 
@@ -1019,17 +584,33 @@ export class BoxService {
   }
 
   async getOrganizationId(boxIdOrName: string, organizationId?: string): Promise<string> {
+    const organizationFilter = organizationId ? { organizationId: organizationId } : {}
+
     let box = await this.boxRepository.findOne({
       where: {
-        id: boxIdOrName,
-        ...(organizationId ? { organizationId: organizationId } : {}),
+        boxId: boxIdOrName,
+        ...organizationFilter,
       },
       select: ['organizationId'],
       cache: {
-        id: boxOrgIdCacheKeyById({ organizationId, boxId: boxIdOrName }),
+        id: boxOrgIdCacheKeyByBoxId({ organizationId, boxId: boxIdOrName }),
         milliseconds: BOX_ORG_ID_CACHE_TTL_MS,
       },
     })
+
+    if (!box) {
+      box = await this.boxRepository.findOne({
+        where: {
+          id: boxIdOrName,
+          ...organizationFilter,
+        },
+        select: ['organizationId'],
+        cache: {
+          id: boxOrgIdCacheKeyById({ organizationId, boxId: boxIdOrName }),
+          milliseconds: BOX_ORG_ID_CACHE_TTL_MS,
+        },
+      })
+    }
 
     if (!box && organizationId) {
       box = await this.boxRepository.findOne({
@@ -1046,39 +627,35 @@ export class BoxService {
     }
 
     if (!box || !box.organizationId) {
-      throw new NotFoundException(`Box with ID or name ${boxIdOrName} not found`)
+      throw new NotFoundException(`Box with Box ID, UUID, or name ${boxIdOrName} not found`)
     }
 
     return box.organizationId
   }
 
-  async getRunnerId(boxId: string): Promise<string | null> {
+  async getRunnerId(boxIdOrName: string): Promise<string | null> {
     const box = await this.boxRepository.findOne({
-      where: {
-        id: boxId,
-      },
+      where: [{ boxId: boxIdOrName }, { id: boxIdOrName }, { name: boxIdOrName }],
       select: ['runnerId'],
       loadEagerRelations: false,
     })
 
     if (!box) {
-      throw new NotFoundException(`Box with ID ${boxId} not found`)
+      throw new NotFoundException(`Box with Box ID, UUID, or name ${boxIdOrName} not found`)
     }
 
     return box.runnerId || null
   }
 
-  async getRegionId(boxId: string): Promise<string> {
+  async getRegionId(boxIdOrName: string): Promise<string> {
     const box = await this.boxRepository.findOne({
-      where: {
-        id: boxId,
-      },
+      where: [{ boxId: boxIdOrName }, { id: boxIdOrName }, { name: boxIdOrName }],
       select: ['region'],
       loadEagerRelations: false,
     })
 
     if (!box) {
-      throw new NotFoundException(`Box with ID ${boxId} not found`)
+      throw new NotFoundException(`Box with Box ID, UUID, or name ${boxIdOrName} not found`)
     }
 
     return box.region
@@ -1092,31 +669,7 @@ export class BoxService {
     const proxyDomain = this.configService.getOrThrow('proxy.domain')
     const proxyProtocol = this.configService.getOrThrow('proxy.protocol')
 
-    const where: FindOptionsWhere<Box> = {
-      organizationId: organizationId,
-      state: Not(BoxState.DESTROYED),
-    }
-
-    const box = await this.boxRepository.findOne({
-      where: [
-        {
-          id: boxIdOrName,
-          ...where,
-        },
-        {
-          name: boxIdOrName,
-          ...where,
-        },
-      ],
-      cache: {
-        id: `box:${boxIdOrName}:organization:${organizationId}`,
-        milliseconds: 1000,
-      },
-    })
-
-    if (!box) {
-      throw new NotFoundException(`Box with ID or name ${boxIdOrName} not found`)
-    }
+    const box = await this.findOneByIdOrName(boxIdOrName, organizationId)
 
     let url = `${proxyProtocol}://${port}-${box.id}.${proxyDomain}`
 
@@ -1150,31 +703,7 @@ export class BoxService {
     const proxyDomain = this.configService.getOrThrow('proxy.domain')
     const proxyProtocol = this.configService.getOrThrow('proxy.protocol')
 
-    const where: FindOptionsWhere<Box> = {
-      organizationId: organizationId,
-      state: Not(BoxState.DESTROYED),
-    }
-
-    const box = await this.boxRepository.findOne({
-      where: [
-        {
-          id: boxIdOrName,
-          ...where,
-        },
-        {
-          name: boxIdOrName,
-          ...where,
-        },
-      ],
-      cache: {
-        id: `box:${boxIdOrName}:organization:${organizationId}`,
-        milliseconds: 1000,
-      },
-    })
-
-    if (!box) {
-      throw new NotFoundException(`Box with ID or name ${boxIdOrName} not found`)
-    }
+    const box = await this.findOneByIdOrName(boxIdOrName, organizationId)
 
     const token = customNanoid(urlAlphabet.replace('_', '').replace('-', ''))(16).toLocaleLowerCase()
 
@@ -1224,7 +753,7 @@ export class BoxService {
   async destroy(boxIdOrName: string, organizationId?: string): Promise<Box> {
     const box = await this.findOneByIdOrName(boxIdOrName, organizationId)
 
-    if (box.pending && box.state !== BoxState.PENDING_BUILD) {
+    if (box.pending) {
       throw new BoxError('Box state change in progress')
     }
 
@@ -1240,10 +769,6 @@ export class BoxService {
   }
 
   async start(boxIdOrName: string, organization: Organization): Promise<Box> {
-    let pendingCpuIncrement: number | undefined
-    let pendingMemoryIncrement: number | undefined
-    let pendingDiskIncrement: number | undefined
-
     const box = await this.findOneByIdOrName(boxIdOrName, organization.id)
 
     const region = await this.regionService.findOne(box.region)
@@ -1251,70 +776,40 @@ export class BoxService {
       throw new NotFoundException(`Region with ID ${box.region} not found`)
     }
 
-    try {
-      if (box.state === BoxState.STARTED && box.desiredState === BoxDesiredState.STARTED) {
-        return box
-      }
-
-      this.assertBoxNotErrored(box)
-
-      if (String(box.state) !== String(box.desiredState)) {
-        // Allow start of stopped | archived and archiving | archived boxes
-        if (
-          box.desiredState !== BoxDesiredState.ARCHIVED ||
-          (box.state !== BoxState.STOPPED && box.state !== BoxState.ARCHIVING)
-        ) {
-          throw new BoxError('State change in progress')
-        }
-      }
-
-      if (![BoxState.STOPPED, BoxState.ARCHIVED, BoxState.ARCHIVING].includes(box.state)) {
-        throw new BoxError('Box is not in valid state')
-      }
-
-      if (box.pending) {
-        throw new BoxError('Box state change in progress')
-      }
-
-      this.organizationService.assertOrganizationIsNotSuspended(organization)
-
-      const { pendingCpuIncremented, pendingMemoryIncremented, pendingDiskIncremented } =
-        await this.validateOrganizationQuotas(organization, region, box.cpu, box.mem, box.disk, box.id)
-
-      if (pendingCpuIncremented) {
-        pendingCpuIncrement = box.cpu
-      }
-      if (pendingMemoryIncremented) {
-        pendingMemoryIncrement = box.mem
-      }
-      if (pendingDiskIncremented) {
-        pendingDiskIncrement = box.disk
-      }
-
-      const updateData: Partial<Box> = {
-        pending: true,
-        desiredState: BoxDesiredState.STARTED,
-        authToken: nanoid(32).toLocaleLowerCase(),
-      }
-
-      const updatedBox = await this.boxRepository.updateWhere(box.id, {
-        updateData,
-        whereCondition: { pending: false, state: box.state },
-      })
-
-      this.eventEmitter.emit(BoxEvents.STARTED, new BoxStartedEvent(updatedBox))
-
-      return updatedBox
-    } catch (error) {
-      await this.rollbackPendingUsage(
-        organization.id,
-        box.region,
-        pendingCpuIncrement,
-        pendingMemoryIncrement,
-        pendingDiskIncrement,
-      )
-      throw error
+    if (box.state === BoxState.STARTED && box.desiredState === BoxDesiredState.STARTED) {
+      return box
     }
+
+    this.assertBoxNotErrored(box)
+
+    if (String(box.state) !== String(box.desiredState)) {
+      throw new BoxError('State change in progress')
+    }
+
+    if (box.state !== BoxState.STOPPED) {
+      throw new BoxError('Box is not in valid state')
+    }
+
+    if (box.pending) {
+      throw new BoxError('Box state change in progress')
+    }
+
+    this.organizationService.assertOrganizationIsNotSuspended(organization)
+
+    const updateData: Partial<Box> = {
+      pending: true,
+      desiredState: BoxDesiredState.STARTED,
+      authToken: nanoid(32).toLocaleLowerCase(),
+    }
+
+    const updatedBox = await this.boxRepository.updateWhere(box.id, {
+      updateData,
+      whereCondition: { pending: false, state: box.state },
+    })
+
+    this.eventEmitter.emit(BoxEvents.STARTED, new BoxStartedEvent(updatedBox))
+
+    return updatedBox
   }
 
   async stop(boxIdOrName: string, organizationId?: string, force?: boolean): Promise<Box> {
@@ -1420,10 +915,6 @@ export class BoxService {
   }
 
   async resize(boxIdOrName: string, resizeDto: ResizeBoxDto, organization: Organization): Promise<Box> {
-    let pendingCpuIncrement: number | undefined
-    let pendingMemoryIncrement: number | undefined
-    let pendingDiskIncrement: number | undefined
-
     const box = await this.findOneByIdOrName(boxIdOrName, organization.id)
 
     const region = await this.regionService.findOne(box.region)
@@ -1431,163 +922,93 @@ export class BoxService {
       throw new NotFoundException(`Region with ID ${box.region} not found`)
     }
 
+    // Validate box is in a valid state for resize
+    if (box.state !== BoxState.STARTED && box.state !== BoxState.STOPPED) {
+      throw new BadRequestError('Box must be in started or stopped state to resize')
+    }
+
+    if (box.pending) {
+      throw new BoxError('Box state change in progress')
+    }
+
+    // If no resize parameters provided, throw error
+    if (resizeDto.cpu === undefined && resizeDto.memory === undefined && resizeDto.disk === undefined) {
+      throw new BadRequestError('No resource changes specified - box is already at the desired configuration')
+    }
+
+    // Disk resize requires stopped box (cold resize only)
+    if (resizeDto.disk !== undefined && box.state !== BoxState.STOPPED) {
+      throw new BadRequestError('Disk resize can only be performed on a stopped box')
+    }
+
+    // Hot resize (box is running): only CPU and memory can be increased
+    const isHotResize = box.state === BoxState.STARTED
+
+    // Validate hot resize constraints
+    if (isHotResize) {
+      if (resizeDto.cpu !== undefined && resizeDto.cpu < box.cpu) {
+        throw new BadRequestError('Box must be in stopped state to decrease the number of CPU cores')
+      }
+
+      if (resizeDto.memory !== undefined && resizeDto.memory < box.mem) {
+        throw new BadRequestError('Box must be in stopped state to decrease memory')
+      }
+    }
+
+    // Disk can only be increased (never decreased)
+    if (resizeDto.disk !== undefined && resizeDto.disk < box.disk) {
+      throw new BadRequestError('Box disk size cannot be decreased')
+    }
+
+    // Calculate new resource values
+    const newCpu = resizeDto.cpu ?? box.cpu
+    const newMem = resizeDto.memory ?? box.mem
+    const newDisk = resizeDto.disk ?? box.disk
+
+    // Throw if nothing actually changes
+    if (newCpu === box.cpu && newMem === box.mem && newDisk === box.disk) {
+      throw new BadRequestError('No resource changes specified - box is already at the desired configuration')
+    }
+
+    this.organizationService.assertOrganizationIsNotSuspended(organization)
+
+    // Get runner and validate before changing state
+    if (!box.runnerId) {
+      throw new BadRequestError('Box has no runner assigned')
+    }
+
+    const runner = await this.runnerService.findOneOrFail(box.runnerId)
+
+    // Capture the previous state before transitioning to RESIZING (STARTED or STOPPED)
+    const previousState =
+      box.state === BoxState.STARTED ? BoxState.STARTED : box.state === BoxState.STOPPED ? BoxState.STOPPED : null
+
+    if (!previousState) {
+      throw new BadRequestError('Box must be in started or stopped state to resize')
+    }
+
+    // Now transition to RESIZING state
+    const updateData: Partial<Box> = {
+      state: BoxState.RESIZING,
+    }
+
+    await this.boxRepository.updateWhere(box.id, {
+      updateData,
+      whereCondition: { pending: false, state: previousState },
+    })
+
     try {
-      // Validate box is in a valid state for resize
-      if (box.state !== BoxState.STARTED && box.state !== BoxState.STOPPED) {
-        throw new BadRequestError('Box must be in started or stopped state to resize')
-      }
+      const runnerAdapter = await this.runnerAdapterFactory.create(runner)
 
-      if (box.pending) {
-        throw new BoxError('Box state change in progress')
-      }
+      await runnerAdapter.resizeBox(box.id, resizeDto.cpu, resizeDto.memory, resizeDto.disk)
 
-      // If no resize parameters provided, throw error
-      if (resizeDto.cpu === undefined && resizeDto.memory === undefined && resizeDto.disk === undefined) {
-        throw new BadRequestError('No resource changes specified - box is already at the desired configuration')
-      }
-
-      // Disk resize requires stopped box (cold resize only)
-      if (resizeDto.disk !== undefined && box.state !== BoxState.STOPPED) {
-        throw new BadRequestError('Disk resize can only be performed on a stopped box')
-      }
-
-      // Hot resize (box is running): only CPU and memory can be increased
-      const isHotResize = box.state === BoxState.STARTED
-
-      // Validate hot resize constraints
-      if (isHotResize) {
-        if (resizeDto.cpu !== undefined && resizeDto.cpu < box.cpu) {
-          throw new BadRequestError('Box must be in stopped state to decrease the number of CPU cores')
-        }
-
-        if (resizeDto.memory !== undefined && resizeDto.memory < box.mem) {
-          throw new BadRequestError('Box must be in stopped state to decrease memory')
-        }
-      }
-
-      // Disk can only be increased (never decreased)
-      if (resizeDto.disk !== undefined && resizeDto.disk < box.disk) {
-        throw new BadRequestError('Box disk size cannot be decreased')
-      }
-
-      // Calculate new resource values
-      const newCpu = resizeDto.cpu ?? box.cpu
-      const newMem = resizeDto.memory ?? box.mem
-      const newDisk = resizeDto.disk ?? box.disk
-
-      // Throw if nothing actually changes
-      if (newCpu === box.cpu && newMem === box.mem && newDisk === box.disk) {
-        throw new BadRequestError('No resource changes specified - box is already at the desired configuration')
-      }
-
-      // Validate organization quotas for the new resource values
-      this.organizationService.assertOrganizationIsNotSuspended(organization)
-
-      // Validate per-box quotas with total new values
-      if (newCpu > organization.maxCpuPerBox) {
-        throw new ForbiddenException(
-          `CPU request ${newCpu} exceeds maximum allowed per box (${organization.maxCpuPerBox}).\n${PER_BOX_LIMIT_MESSAGE}`,
-        )
-      }
-      if (newMem > organization.maxMemoryPerBox) {
-        throw new ForbiddenException(
-          `Memory request ${newMem}GB exceeds maximum allowed per box (${organization.maxMemoryPerBox}GB).\n${PER_BOX_LIMIT_MESSAGE}`,
-        )
-      }
-      if (newDisk > organization.maxDiskPerBox) {
-        throw new ForbiddenException(
-          `Disk request ${newDisk}GB exceeds maximum allowed per box (${organization.maxDiskPerBox}GB).\n${PER_BOX_LIMIT_MESSAGE}`,
-        )
-      }
-
-      // For cold resize, cpu/memory don't affect quota until box is STARTED.
-      // For hot resize, track all deltas (positive reserves quota, negative frees quota for others).
-      const cpuDeltaForQuota = isHotResize ? newCpu - box.cpu : 0
-      const memDeltaForQuota = isHotResize ? newMem - box.mem : 0
-      const diskDeltaForQuota = newDisk - box.disk // Disk only increases (validated at start of method)
-
-      // Validate and track pending for any non-zero quota changes
-      if (cpuDeltaForQuota !== 0 || memDeltaForQuota !== 0 || diskDeltaForQuota !== 0) {
-        const { pendingCpuIncremented, pendingMemoryIncremented, pendingDiskIncremented } =
-          await this.validateOrganizationQuotas(
-            organization,
-            region,
-            cpuDeltaForQuota,
-            memDeltaForQuota,
-            diskDeltaForQuota,
-          )
-
-        if (pendingCpuIncremented) {
-          pendingCpuIncrement = cpuDeltaForQuota
-        }
-        if (pendingMemoryIncremented) {
-          pendingMemoryIncrement = memDeltaForQuota
-        }
-        if (pendingDiskIncremented) {
-          pendingDiskIncrement = diskDeltaForQuota
-        }
-      }
-
-      // Get runner and validate before changing state
-      if (!box.runnerId) {
-        throw new BadRequestError('Box has no runner assigned')
-      }
-
-      const runner = await this.runnerService.findOneOrFail(box.runnerId)
-
-      // Capture the previous state before transitioning to RESIZING (STARTED or STOPPED)
-      const previousState =
-        box.state === BoxState.STARTED ? BoxState.STARTED : box.state === BoxState.STOPPED ? BoxState.STOPPED : null
-
-      if (!previousState) {
-        throw new BadRequestError('Box must be in started or stopped state to resize')
-      }
-
-      // Now transition to RESIZING state
-      const updateData: Partial<Box> = {
-        state: BoxState.RESIZING,
-      }
-
-      await this.boxRepository.updateWhere(box.id, {
-        updateData,
-        whereCondition: { pending: false, state: previousState },
-      })
-
-      try {
-        const runnerAdapter = await this.runnerAdapterFactory.create(runner)
-
-        await runnerAdapter.resizeBox(box.id, resizeDto.cpu, resizeDto.memory, resizeDto.disk)
-
-        // For V0 runners, update resources immediately (subscriber emits STATE_UPDATED)
-        // For V2 runners, job handler will update resources on completion
-        if (runner.apiVersion === '0') {
-          const updateData: Partial<Box> = {
-            cpu: newCpu,
-            mem: newMem,
-            disk: newDisk,
-            state: previousState,
-          }
-
-          await this.boxRepository.updateWhere(box.id, {
-            updateData,
-            whereCondition: { state: BoxState.RESIZING },
-          })
-
-          // Apply the usage change (increments current, decrements pending)
-          // Only apply deltas for quotas that were validated/pending-incremented
-          await this.organizationUsageService.applyResizeUsageChange(
-            organization.id,
-            box.region,
-            cpuDeltaForQuota,
-            memDeltaForQuota,
-            diskDeltaForQuota,
-          )
-        }
-
-        return await this.findOneByIdOrName(box.id, organization.id)
-      } catch (error) {
-        // Return to previous state on error
+      // For V0 runners, update resources immediately (subscriber emits STATE_UPDATED)
+      // For V2 runners, job handler will update resources on completion
+      if (runner.apiVersion === '0') {
         const updateData: Partial<Box> = {
+          cpu: newCpu,
+          mem: newMem,
+          disk: newDisk,
           state: previousState,
         }
 
@@ -1595,17 +1016,20 @@ export class BoxService {
           updateData,
           whereCondition: { state: BoxState.RESIZING },
         })
-
-        throw error
       }
+
+      return await this.findOneByIdOrName(box.id, organization.id)
     } catch (error) {
-      await this.rollbackPendingUsage(
-        organization.id,
-        box.region,
-        pendingCpuIncrement,
-        pendingMemoryIncrement,
-        pendingDiskIncrement,
-      )
+      // Return to previous state on error
+      const updateData: Partial<Box> = {
+        state: previousState,
+      }
+
+      await this.boxRepository.updateWhere(box.id, {
+        updateData,
+        whereCondition: { state: BoxState.RESIZING },
+      })
+
       throw error
     }
   }
@@ -1712,35 +1136,12 @@ export class BoxService {
     return result
   }
 
-  async getBuildLogsUrl(boxIdOrName: string, organizationId: string): Promise<string> {
-    const box = await this.findOneByIdOrName(boxIdOrName, organizationId)
-
-    if (!box.buildInfo?.snapshotRef) {
-      throw new NotFoundException(`Box ${boxIdOrName} has no build info`)
-    }
-
-    const region = await this.regionService.findOne(box.region, true)
-
-    if (!region) {
-      throw new NotFoundException(`Region for runner for box ${boxIdOrName} not found`)
-    }
-
-    if (!region.proxyUrl) {
-      return `${this.configService.getOrThrow('proxy.protocol')}://${this.configService.getOrThrow('proxy.domain')}/boxes/${box.id}/build-logs`
-    }
-
-    return region.proxyUrl + '/boxes/' + box.id + '/build-logs'
-  }
-
   private async getValidatedOrDefaultRegion(organization: Organization, regionIdOrName?: string): Promise<Region> {
-    if (!organization.defaultRegionId) {
-      throw new DefaultRegionRequiredException()
-    }
-
     regionIdOrName = regionIdOrName?.trim()
 
     if (!regionIdOrName) {
-      const region = await this.regionService.findOne(organization.defaultRegionId)
+      const defaultRegionId = organization.defaultRegionId || this.configService.getOrThrow('defaultRegion.id')
+      const region = await this.regionService.findOne(defaultRegionId)
       if (!region) {
         throw new NotFoundException('Default region not found')
       }
@@ -1799,42 +1200,6 @@ export class BoxService {
     }
   }
 
-  @Cron(CronExpression.EVERY_10_MINUTES, { name: 'cleanup-build-failed-boxes' })
-  @LogExecution('cleanup-build-failed-boxes')
-  @WithInstrumentation()
-  async cleanupBuildFailedBoxes() {
-    const twentyFourHoursAgo = new Date()
-    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24)
-
-    const destroyedBoxs = await this.boxRepository.delete({
-      state: BoxState.BUILD_FAILED,
-      desiredState: BoxDesiredState.DESTROYED,
-      updatedAt: LessThan(twentyFourHoursAgo),
-    })
-
-    if (destroyedBoxs.affected > 0) {
-      this.logger.debug(`Cleaned up ${destroyedBoxs.affected} build failed boxes`)
-    }
-  }
-
-  @Cron(CronExpression.EVERY_SECOND, { name: 'cleanup-stale-build-failed-boxes' })
-  @LogExecution('cleanup-stale-build-failed-boxes')
-  @WithInstrumentation()
-  async cleanupStaleBuildFailedBoxes() {
-    const sevenDaysAgo = new Date()
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-
-    const result = await this.boxRepository.delete({
-      state: BoxState.BUILD_FAILED,
-      desiredState: BoxDesiredState.STARTED,
-      updatedAt: LessThan(sevenDaysAgo),
-    })
-
-    if (result.affected > 0) {
-      this.logger.debug(`Cleaned up ${result.affected} stale build failed boxes`)
-    }
-  }
-
   @Cron(CronExpression.EVERY_SECOND, { name: 'cleanup-stale-error-boxes' })
   @LogExecution('cleanup-stale-error-boxes')
   @WithInstrumentation()
@@ -1858,16 +1223,6 @@ export class BoxService {
 
     const updateData: Partial<Box> = {
       autoStopInterval: this.resolveAutoStopInterval(interval),
-    }
-
-    return await this.boxRepository.update(box.id, { updateData, entity: box })
-  }
-
-  async setAutoArchiveInterval(boxIdOrName: string, interval: number, organizationId?: string): Promise<Box> {
-    const box = await this.findOneByIdOrName(boxIdOrName, organizationId)
-
-    const updateData: Partial<Box> = {
-      autoArchiveInterval: this.resolveAutoArchiveInterval(interval),
     }
 
     return await this.boxRepository.update(box.id, { updateData, entity: box })
@@ -2036,20 +1391,6 @@ export class BoxService {
     return autoStopInterval
   }
 
-  private resolveAutoArchiveInterval(autoArchiveInterval: number): number {
-    if (autoArchiveInterval < 0) {
-      throw new BadRequestError('Auto-archive interval must be non-negative')
-    }
-
-    const maxAutoArchiveInterval = this.configService.getOrThrow('maxAutoArchiveInterval')
-
-    if (autoArchiveInterval === 0) {
-      return maxAutoArchiveInterval
-    }
-
-    return Math.min(autoArchiveInterval, maxAutoArchiveInterval)
-  }
-
   private resolveNetworkAllowList(networkAllowList: string): string {
     try {
       validateNetworkAllowList(networkAllowList)
@@ -2144,27 +1485,5 @@ export class BoxService {
     }
 
     return { valid: true, boxId: sshAccess.box.id }
-  }
-
-  async updateBoxBackupState(
-    boxId: string,
-    backupState: BackupState,
-    backupSnapshot?: string | null,
-    backupRegistryId?: string | null,
-    backupErrorReason?: string | null,
-  ): Promise<void> {
-    const boxToUpdate = await this.boxRepository.findOneByOrFail({
-      id: boxId,
-    })
-
-    const updateData = Box.getBackupStateUpdate(
-      boxToUpdate,
-      backupState,
-      backupSnapshot,
-      backupRegistryId,
-      backupErrorReason,
-    )
-
-    await this.boxRepository.update(boxId, { updateData, entity: boxToUpdate })
   }
 }

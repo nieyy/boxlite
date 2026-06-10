@@ -15,13 +15,6 @@ func NotifyEmptyBoxList(tip bool) {
 	}
 }
 
-func NotifyEmptySnapshotList(tip bool) {
-	common.RenderInfoMessageBold("No snapshots found")
-	if tip {
-		common.RenderTip("Use 'boxlite snapshot push' to push a snapshot.")
-	}
-}
-
 func NotifyEmptyOrganizationList(tip bool) {
 	common.RenderInfoMessageBold("No organizations found")
 	if tip {

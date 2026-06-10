@@ -3,12 +3,7 @@
 
 package boxlite
 
-import (
-	"runtime"
-	"testing"
-
-	"github.com/boxlite-ai/runner/pkg/api/dto"
-)
+import "testing"
 
 func TestNormalizeRegistryHosts(t *testing.T) {
 	hosts := normalizeRegistryHosts([]string{
@@ -26,59 +21,5 @@ func TestNormalizeRegistryHosts(t *testing.T) {
 		if hosts[i] != want[i] {
 			t.Fatalf("host %d: expected %q, got %q", i, want[i], hosts[i])
 		}
-	}
-}
-
-func TestParseReferenceUsesConfiguredInsecureRegistry(t *testing.T) {
-	client := &Client{
-		insecureRegistries: normalizeRegistryHosts([]string{"registry.local:5000"}),
-	}
-
-	ref, err := client.parseReference("registry.local:5000/project/image:tag", &dto.RegistryDTO{
-		Url: "registry.local:5000",
-	})
-	if err != nil {
-		t.Fatalf("parse reference: %v", err)
-	}
-
-	if got := ref.Context().Registry.Scheme(); got != "http" {
-		t.Fatalf("expected insecure registry scheme http, got %q", got)
-	}
-}
-
-func TestParseReferenceUsesHttpRegistryURLAsInsecure(t *testing.T) {
-	client := &Client{}
-
-	ref, err := client.parseReference("registry.local:5000/project/image:tag", &dto.RegistryDTO{
-		Url: "http://registry.local:5000",
-	})
-	if err != nil {
-		t.Fatalf("parse reference: %v", err)
-	}
-
-	if got := ref.Context().Registry.Scheme(); got != "http" {
-		t.Fatalf("expected http registry URL to force scheme http, got %q", got)
-	}
-}
-
-func TestSanitizeImageReferenceStripsScheme(t *testing.T) {
-	got := sanitizeImageReference("https://registry.local:5000/project/image:tag")
-	want := "registry.local:5000/project/image:tag"
-
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
-func TestLinuxHostPlatformMatchesHostArch(t *testing.T) {
-	// Registry pulls must target the runner host's architecture: a layer
-	// pulled as linux/amd64 onto an arm64 host produces x86 ELF binaries that
-	// fail with ENOEXEC when libkrun execs them inside the microVM. Guard
-	// against re-hardcoding a fixed arch.
-	if linuxHostPlatform.OS != "linux" {
-		t.Errorf("OS = %q, want linux", linuxHostPlatform.OS)
-	}
-	if linuxHostPlatform.Architecture != runtime.GOARCH {
-		t.Errorf("Architecture = %q, want host arch %q", linuxHostPlatform.Architecture, runtime.GOARCH)
 	}
 }

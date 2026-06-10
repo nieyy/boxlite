@@ -31,20 +31,17 @@ export interface JobTypeMap {
   [JobType.CREATE_BACKUP]: {
     resourceType: [ResourceType.BOX]
   }
-  [JobType.BUILD_SNAPSHOT]: {
-    resourceType: [ResourceType.BOX, ResourceType.SNAPSHOT]
+  [JobType.PULL_ARTIFACT]: {
+    resourceType: [ResourceType.ARTIFACT]
   }
-  [JobType.PULL_SNAPSHOT]: {
-    resourceType: [ResourceType.SNAPSHOT]
-  }
-  [JobType.REMOVE_SNAPSHOT]: {
-    resourceType: [ResourceType.SNAPSHOT]
+  [JobType.REMOVE_ARTIFACT]: {
+    resourceType: [ResourceType.ARTIFACT]
   }
   [JobType.UPDATE_BOX_NETWORK_SETTINGS]: {
     resourceType: [ResourceType.BOX]
   }
-  [JobType.INSPECT_SNAPSHOT_IN_REGISTRY]: {
-    resourceType: [ResourceType.SNAPSHOT]
+  [JobType.INSPECT_ARTIFACT_IN_REGISTRY]: {
+    resourceType: [ResourceType.ARTIFACT]
   }
   [JobType.RECOVER_BOX]: {
     resourceType: [ResourceType.BOX]

@@ -11,10 +11,9 @@ import (
 
 	"github.com/boxlite-ai/boxlite/cli/cmd"
 	"github.com/boxlite-ai/boxlite/cli/cmd/auth"
-	"github.com/boxlite-ai/boxlite/cli/cmd/box"
 	"github.com/boxlite-ai/boxlite/cli/cmd/mcp"
 	"github.com/boxlite-ai/boxlite/cli/cmd/organization"
-	"github.com/boxlite-ai/boxlite/cli/cmd/snapshot"
+	"github.com/boxlite-ai/boxlite/cli/cmd/box"
 	"github.com/boxlite-ai/boxlite/cli/cmd/volume"
 	"github.com/boxlite-ai/boxlite/cli/internal"
 	"github.com/joho/godotenv"
@@ -40,7 +39,6 @@ func init() {
 	rootCmd.AddCommand(auth.LoginCmd)
 	rootCmd.AddCommand(auth.LogoutCmd)
 	rootCmd.AddCommand(box.BoxCmd)
-	rootCmd.AddCommand(snapshot.SnapshotsCmd)
 	rootCmd.AddCommand(volume.VolumeCmd)
 	rootCmd.AddCommand(organization.OrganizationCmd)
 	rootCmd.AddCommand(mcp.MCPCmd)
@@ -56,7 +54,6 @@ func init() {
 	rootCmd.AddCommand(createBoxShortcut(box.ListCmd))
 	rootCmd.AddCommand(createBoxShortcut(box.StartCmd))
 	rootCmd.AddCommand(createBoxShortcut(box.StopCmd))
-	rootCmd.AddCommand(createBoxShortcut(box.ArchiveCmd))
 	rootCmd.AddCommand(createBoxShortcut(box.SSHCmd))
 	rootCmd.AddCommand(createBoxShortcut(box.ExecCmd))
 	rootCmd.AddCommand(createBoxShortcut(box.PreviewUrlCmd))

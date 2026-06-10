@@ -185,7 +185,8 @@ export class BoxRepository extends BaseRepository<Box> {
   private invalidateLookupCacheOnInsert(box: Box): void {
     try {
       this.boxLookupCacheInvalidationService.invalidateOrgId({
-        boxId: box.id,
+        id: box.id,
+        boxId: box.boxId,
         organizationId: box.organizationId,
         name: box.name,
       })
@@ -201,13 +202,15 @@ export class BoxRepository extends BaseRepository<Box> {
    */
   private invalidateLookupCacheOnUpdate(
     updatedBox: Box,
-    previousBox: Pick<Box, 'organizationId' | 'name' | 'authToken'>,
+    previousBox: Pick<Box, 'organizationId' | 'boxId' | 'name' | 'authToken'>,
   ): void {
     try {
       this.boxLookupCacheInvalidationService.invalidate({
-        boxId: updatedBox.id,
+        id: updatedBox.id,
+        boxId: updatedBox.boxId,
         organizationId: updatedBox.organizationId,
         previousOrganizationId: previousBox.organizationId,
+        previousBoxId: previousBox.boxId,
         name: updatedBox.name,
         previousName: previousBox.name,
       })

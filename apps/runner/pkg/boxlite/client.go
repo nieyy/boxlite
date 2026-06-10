@@ -18,26 +18,28 @@ import (
 	boxlite "github.com/boxlite-ai/boxlite/sdks/go"
 	"github.com/boxlite-ai/runner/pkg/api/dto"
 	"github.com/boxlite-ai/runner/pkg/models/enums"
-	"github.com/containerd/errdefs"
+	"go.opentelemetry.io/otel/propagation"
 )
 
 // Client wraps the BoxLite Go SDK to provide the same interface as the Docker client.
 // It manages VMs instead of containers, providing hardware-level isolation.
 type Client struct {
-	runtime            *boxlite.Runtime
-	logger             *slog.Logger
-	insecureRegistries []string
-	mu                 sync.RWMutex
-	boxes              map[string]*boxlite.Box
-	awsRegion          string
-	awsEndpointUrl     string
-	awsAccessKeyId     string
-	awsSecretAccessKey string
-	volumeMutexes      map[string]*sync.Mutex
-	volumeMutexesMutex sync.Mutex
-	volumeCleanupMutex sync.Mutex
-	lastVolumeCleanup  time.Time
-	volumeCleanup      volumeCleanupConfig
+	runtime             *boxlite.Runtime
+	logger              *slog.Logger
+	homeDir             string
+	mu                  sync.RWMutex
+	boxes               map[string]*boxlite.Box
+	awsRegion           string
+	awsEndpointUrl      string
+	awsAccessKeyId      string
+	awsSecretAccessKey  string
+	volumeMutexes       map[string]*sync.Mutex
+	volumeMutexesMutex  sync.Mutex
+	volumeCleanupMutex  sync.Mutex
+	toolboxPortMutex    sync.Mutex
+	toolboxReadyTimeout time.Duration
+	lastVolumeCleanup   time.Time
+	volumeCleanup       volumeCleanupConfig
 }
 
 // ClientConfig holds configuration for the BoxLite client.
@@ -45,6 +47,8 @@ type ClientConfig struct {
 	Logger                       *slog.Logger
 	HomeDir                      string
 	InsecureRegistries           []string
+	GhcrUsername                 string
+	GhcrToken                    string
 	AWSRegion                    string
 	AWSEndpointUrl               string
 	AWSAccessKeyId               string
@@ -52,6 +56,7 @@ type ClientConfig struct {
 	VolumeCleanupInterval        time.Duration
 	VolumeCleanupDryRun          bool
 	VolumeCleanupExclusionPeriod time.Duration
+	ToolboxReadyTimeout          time.Duration
 }
 
 func networkSpec(blockAll *bool, allowList *string) boxlite.NetworkSpec {
@@ -73,22 +78,76 @@ func networkSpec(blockAll *bool, allowList *string) boxlite.NetworkSpec {
 	return spec
 }
 
+func daemonBoxEnv(ctx context.Context, boxDto dto.CreateBoxDTO) map[string]string {
+	env := map[string]string{
+		"BOXLITE_BOX_ID": boxDto.Id,
+	}
+	if boxDto.OtelEndpoint != nil && *boxDto.OtelEndpoint != "" {
+		env["BOXLITE_OTEL_ENDPOINT"] = *boxDto.OtelEndpoint
+	}
+	if boxDto.OrganizationId != nil && *boxDto.OrganizationId != "" {
+		env["BOXLITE_ORGANIZATION_ID"] = *boxDto.OrganizationId
+	}
+	if boxDto.RegionId != nil && *boxDto.RegionId != "" {
+		env["BOXLITE_REGION_ID"] = *boxDto.RegionId
+	}
+	// Propagate the active W3C trace context into the box so the in-box daemon's telemetry
+	// joins the SAME traceId as the api->runner spans, instead of rooting a fresh disjoint
+	// trace. With no active span the carrier is empty => env is byte-identical to before.
+	carrier := propagation.MapCarrier{}
+	propagation.TraceContext{}.Inject(ctx, carrier)
+	if traceParent := carrier.Get("traceparent"); traceParent != "" {
+		env["BOXLITE_TRACEPARENT"] = traceParent
+		if traceState := carrier.Get("tracestate"); traceState != "" {
+			env["BOXLITE_TRACESTATE"] = traceState
+		}
+	}
+	return env
+}
+
+// buildImageRegistries assembles the runtime-scoped OCI registry list handed to boxlite-core:
+// the existing insecure (HTTP, no-auth) registries, plus — when ghcr credentials are provided —
+// a single authenticated ghcr.io HTTPS entry so core can pull our private first-party images
+// directly from ghcr (no self-hosted registry mirror required). Auth is runtime-scoped because
+// boxlite.Runtime.Create has no per-call credential parameter. When ghcrUsername/ghcrToken are
+// empty this is byte-for-byte the previous behavior (anonymous), so it is safe to ship dark.
+// Kept as a pure function so the wiring can be unit-tested without constructing a real runtime.
+func buildImageRegistries(insecureRegistries []string, ghcrUsername, ghcrToken string) []boxlite.ImageRegistry {
+	registries := make([]boxlite.ImageRegistry, 0, len(insecureRegistries)+1)
+	for _, host := range insecureRegistries {
+		registries = append(registries, boxlite.ImageRegistry{
+			Host:       host,
+			Transport:  boxlite.RegistryTransportHTTP,
+			SkipVerify: true,
+		})
+	}
+	if ghcrUsername != "" && ghcrToken != "" {
+		registries = append(registries, boxlite.ImageRegistry{
+			Host:      "ghcr.io",
+			Transport: boxlite.RegistryTransportHTTPS,
+			Auth: boxlite.ImageRegistryAuth{
+				Username: ghcrUsername,
+				Password: ghcrToken,
+			},
+		})
+	}
+	return registries
+}
+
 // NewClient creates a new BoxLite client backed by the BoxLite VM runtime.
 func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
+	toolboxReadyTimeout := config.ToolboxReadyTimeout
+	if toolboxReadyTimeout <= 0 {
+		toolboxReadyTimeout = 30 * time.Second
+	}
+
 	var opts []boxlite.RuntimeOption
 	if config.HomeDir != "" {
 		opts = append(opts, boxlite.WithHomeDir(config.HomeDir))
 	}
 	insecureRegistries := normalizeRegistryHosts(config.InsecureRegistries)
-	if len(insecureRegistries) > 0 {
-		registries := make([]boxlite.ImageRegistry, 0, len(insecureRegistries))
-		for _, host := range insecureRegistries {
-			registries = append(registries, boxlite.ImageRegistry{
-				Host:       host,
-				Transport:  boxlite.RegistryTransportHTTP,
-				SkipVerify: true,
-			})
-		}
+	registries := buildImageRegistries(insecureRegistries, config.GhcrUsername, config.GhcrToken)
+	if len(registries) > 0 {
 		opts = append(opts, boxlite.WithImageRegistries(registries...))
 	}
 
@@ -103,15 +162,16 @@ func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
 	}
 
 	return &Client{
-		runtime:            rt,
-		logger:             logger,
-		insecureRegistries: insecureRegistries,
-		boxes:              make(map[string]*boxlite.Box),
-		awsRegion:          config.AWSRegion,
-		awsEndpointUrl:     config.AWSEndpointUrl,
-		awsAccessKeyId:     config.AWSAccessKeyId,
-		awsSecretAccessKey: config.AWSSecretAccessKey,
-		volumeMutexes:      make(map[string]*sync.Mutex),
+		runtime:             rt,
+		logger:              logger,
+		homeDir:             config.HomeDir,
+		boxes:               make(map[string]*boxlite.Box),
+		awsRegion:           config.AWSRegion,
+		awsEndpointUrl:      config.AWSEndpointUrl,
+		awsAccessKeyId:      config.AWSAccessKeyId,
+		awsSecretAccessKey:  config.AWSSecretAccessKey,
+		volumeMutexes:       make(map[string]*sync.Mutex),
+		toolboxReadyTimeout: toolboxReadyTimeout,
 		volumeCleanup: volumeCleanupConfig{
 			interval:        config.VolumeCleanupInterval,
 			dryRun:          config.VolumeCleanupDryRun,
@@ -151,6 +211,11 @@ func (c *Client) Close() error {
 // Create creates a new box (VM) from the given image and configuration.
 // Returns the box ID and daemon version.
 func (c *Client) Create(ctx context.Context, boxDto dto.CreateBoxDTO) (string, string, error) {
+	publicBoxId := boxDto.BoxId
+	if publicBoxId == "" {
+		publicBoxId = boxDto.Id
+	}
+
 	// API sends cores / GB / GB as small integers (see apps/api Box entity).
 	cpus := int(boxDto.CpuQuota)
 	if cpus < 1 {
@@ -174,6 +239,9 @@ func (c *Client) Create(ctx context.Context, boxDto dto.CreateBoxDTO) (string, s
 	for k, v := range boxDto.Env {
 		opts = append(opts, boxlite.WithEnv(k, v))
 	}
+	for k, v := range daemonBoxEnv(ctx, boxDto) {
+		opts = append(opts, boxlite.WithEnv(k, v))
+	}
 
 	if len(boxDto.Entrypoint) > 0 {
 		opts = append(opts, boxlite.WithEntrypoint(boxDto.Entrypoint...))
@@ -193,14 +261,23 @@ func (c *Client) Create(ctx context.Context, boxDto dto.CreateBoxDTO) (string, s
 		}
 	}
 
+	toolboxHostPort, err := c.reserveToolboxHostPort(ctx, boxDto.Id)
+	if err != nil {
+		return "", "", err
+	}
+	opts = append(opts, boxlite.WithPort(ToolboxGuestPort, toolboxHostPort))
+
 	opts = append(opts, boxlite.WithNetwork(networkSpec(boxDto.NetworkBlockAll, boxDto.NetworkAllowList)))
 
-	bx, err := c.runtime.Create(ctx, boxDto.Snapshot, opts...)
+	bx, err := c.runtime.Create(ctx, boxDto.ArtifactRef, opts...)
 	if err != nil {
 		if len(volumeMounts) > 0 {
 			if cleanupErr := c.removeBoxVolumeMountRecord(ctx, boxDto.Id); cleanupErr != nil {
 				c.logger.WarnContext(ctx, "failed to remove box volume mount record after create failure", "box", boxDto.Id, "error", cleanupErr)
 			}
+		}
+		if cleanupErr := c.removeToolboxPortRecord(ctx, boxDto.Id); cleanupErr != nil {
+			c.logger.WarnContext(ctx, "failed to remove toolbox port record after create failure", "box", boxDto.Id, "error", cleanupErr)
 		}
 		return "", "", fmt.Errorf("failed to create box: %w", err)
 	}
@@ -209,12 +286,27 @@ func (c *Client) Create(ctx context.Context, boxDto dto.CreateBoxDTO) (string, s
 	c.boxes[boxDto.Id] = bx
 	c.mu.Unlock()
 
-	c.logger.Info("created box", "id", bx.ID(), "name", bx.Name(), "image", boxDto.Snapshot)
+	c.logger.Info(
+		"created box",
+		"id",
+		bx.ID(),
+		"boxId",
+		boxDto.Id,
+		"boxId",
+		publicBoxId,
+		"name",
+		bx.Name(),
+		"artifactRef",
+		boxDto.ArtifactRef,
+	)
 
 	skipStart := boxDto.SkipStart != nil && *boxDto.SkipStart
 	if !skipStart {
 		if err := bx.Start(ctx); err != nil {
 			return bx.ID(), "", fmt.Errorf("failed to start box: %w", err)
+		}
+		if err := c.waitForToolboxReady(ctx, boxDto.Id); err != nil {
+			return bx.ID(), "", err
 		}
 	}
 
@@ -232,6 +324,9 @@ func (c *Client) Start(ctx context.Context, boxId string, authToken *string, met
 		return "", err
 	}
 	if err := bx.Start(ctx); err != nil {
+		return "", err
+	}
+	if err := c.waitForToolboxReady(ctx, boxId); err != nil {
 		return "", err
 	}
 	return "boxlite", nil
@@ -267,6 +362,9 @@ func (c *Client) Destroy(ctx context.Context, boxId string) error {
 
 	if err := c.removeBoxVolumeMountRecord(ctx, boxId); err != nil {
 		c.logger.WarnContext(ctx, "failed to remove box volume mount record", "box", boxId, "error", err)
+	}
+	if err := c.removeToolboxPortRecord(ctx, boxId); err != nil {
+		c.logger.WarnContext(ctx, "failed to remove toolbox port record", "box", boxId, "error", err)
 	}
 	c.CleanupOrphanedVolumeMounts(ctx)
 
@@ -348,52 +446,6 @@ func (c *Client) CopyOut(ctx context.Context, boxId string, guestSrc, hostDst st
 		return err
 	}
 	return bx.CopyOut(ctx, guestSrc, hostDst)
-}
-
-// PullImage pulls an OCI image into the runtime's cache.
-func (c *Client) PullImage(ctx context.Context, imageName string) error {
-	c.logger.Info("pulling image", "image", imageName)
-	images, err := c.runtime.Images()
-	if err != nil {
-		return err
-	}
-	defer images.Close()
-	_, err = images.Pull(ctx, imageName)
-	return err
-}
-
-// RemoveImage removes a cached image.
-func (c *Client) RemoveImage(ctx context.Context, imageName string, force bool) error {
-	c.logger.Warn("remove image not yet implemented in BoxLite", "image", imageName)
-	return errdefs.ErrNotImplemented.WithMessage("image removal is not supported by the BoxLite Go SDK")
-}
-
-// ImageExists checks if an image is cached locally.
-func (c *Client) ImageExists(ctx context.Context, imageName string) (bool, error) {
-	images, err := c.ListImages(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, img := range images {
-		if img.Reference == imageName || img.Repository+":"+img.Tag == imageName {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// GetImageInfo returns metadata about a cached image.
-func (c *Client) GetImageInfoFromCache(ctx context.Context, imageName string) (*boxlite.ImageInfo, error) {
-	images, err := c.ListImages(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for _, img := range images {
-		if img.Reference == imageName || img.Repository+":"+img.Tag == imageName {
-			return &img, nil
-		}
-	}
-	return nil, fmt.Errorf("image not found: %s", imageName)
 }
 
 // ListImages returns all locally cached images.

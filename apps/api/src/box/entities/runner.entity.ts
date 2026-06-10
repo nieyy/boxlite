@@ -114,11 +114,6 @@ export class Runner {
   @Column({
     default: 0,
   })
-  currentSnapshotCount: number
-
-  @Column({
-    default: 0,
-  })
   currentStartedBoxes: number
 
   @Column({

@@ -7,10 +7,8 @@
 import { ApiProperty, ApiPropertyOptional, ApiSchema } from '@nestjs/swagger'
 import { BoxState } from '../enums/box-state.enum'
 import { IsEnum, IsOptional } from 'class-validator'
-import { BackupState } from '../enums/backup-state.enum'
 import { Box } from '../entities/box.entity'
 import { BoxDesiredState } from '../enums/box-desired-state.enum'
-import { BuildInfoDto } from './build-info.dto'
 import { BoxClass } from '../enums/box-class.enum'
 
 @ApiSchema({ name: 'BoxVolume' })
@@ -38,10 +36,16 @@ export class BoxVolume {
 @ApiSchema({ name: 'Box' })
 export class BoxDto {
   @ApiProperty({
-    description: 'The ID of the box',
-    example: 'box123',
+    description: 'The internal UUID of the box',
+    example: 'fd955d93-e74a-48e7-9f2d-fcbe6dd9e920',
   })
   id: string
+
+  @ApiProperty({
+    description: 'The public Box ID shown to users and SDK clients',
+    example: 'aB3cD4eF5gH6',
+  })
+  boxId: string
 
   @ApiProperty({
     description: 'The organization ID of the box',
@@ -54,12 +58,6 @@ export class BoxDto {
     example: 'MyBox',
   })
   name: string
-
-  @ApiPropertyOptional({
-    description: 'The snapshot used for the box',
-    example: 'boxlite-ai/box:latest',
-  })
-  snapshot: string
 
   @ApiProperty({
     description: 'The user associated with the project',
@@ -170,38 +168,12 @@ export class BoxDto {
   recoverable?: boolean
 
   @ApiPropertyOptional({
-    description: 'The state of the backup',
-    enum: BackupState,
-    example: Object.values(BackupState)[0],
-    required: false,
-  })
-  @IsEnum(BackupState)
-  @IsOptional()
-  backupState?: BackupState
-
-  @ApiPropertyOptional({
-    description: 'The creation timestamp of the last backup',
-    example: '2024-10-01T12:00:00Z',
-    required: false,
-  })
-  @IsOptional()
-  backupCreatedAt?: string
-
-  @ApiPropertyOptional({
     description: 'Auto-stop interval in minutes (0 means disabled)',
     example: 30,
     required: false,
   })
   @IsOptional()
   autoStopInterval?: number
-
-  @ApiPropertyOptional({
-    description: 'Auto-archive interval in minutes',
-    example: 7 * 24 * 60,
-    required: false,
-  })
-  @IsOptional()
-  autoArchiveInterval?: number
 
   @ApiPropertyOptional({
     description:
@@ -219,14 +191,6 @@ export class BoxDto {
   })
   @IsOptional()
   volumes?: BoxVolume[]
-
-  @ApiPropertyOptional({
-    description: 'Build information for the box',
-    type: BuildInfoDto,
-    required: false,
-  })
-  @IsOptional()
-  buildInfo?: BuildInfoDto
 
   @ApiPropertyOptional({
     description: 'The creation timestamp of the box',
@@ -280,10 +244,10 @@ export class BoxDto {
   static fromBox(box: Box, toolboxProxyUrl: string): BoxDto {
     return {
       id: box.id,
+      boxId: box.boxId,
       organizationId: box.organizationId,
       name: box.name,
       target: box.region,
-      snapshot: box.snapshot,
       user: box.osUser,
       env: box.env,
       cpu: box.cpu,
@@ -299,23 +263,11 @@ export class BoxDto {
       desiredState: box.desiredState,
       errorReason: box.errorReason,
       recoverable: box.recoverable,
-      backupState: box.backupState,
-      backupCreatedAt: box.lastBackupAt ? new Date(box.lastBackupAt).toISOString() : undefined,
       autoStopInterval: box.autoStopInterval,
-      autoArchiveInterval: box.autoArchiveInterval,
       autoDeleteInterval: box.autoDeleteInterval,
       class: box.class,
       createdAt: box.createdAt ? new Date(box.createdAt).toISOString() : undefined,
       updatedAt: box.updatedAt ? new Date(box.updatedAt).toISOString() : undefined,
-      buildInfo: box.buildInfo
-        ? {
-            dockerfileContent: box.buildInfo.dockerfileContent,
-            contextHashes: box.buildInfo.contextHashes,
-            createdAt: box.buildInfo.createdAt,
-            updatedAt: box.buildInfo.updatedAt,
-            snapshotRef: box.buildInfo.snapshotRef,
-          }
-        : undefined,
       daemonVersion: box.daemonVersion,
       runnerId: box.runnerId,
       toolboxProxyUrl,
@@ -338,9 +290,6 @@ export class BoxDto {
         }
         if (box.desiredState === BoxDesiredState.DESTROYED) {
           return BoxState.DESTROYING
-        }
-        if (box.desiredState === BoxDesiredState.ARCHIVED) {
-          return BoxState.ARCHIVING
         }
         break
       case BoxState.UNKNOWN:

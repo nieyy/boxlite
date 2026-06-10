@@ -21,7 +21,6 @@ import (
 	"github.com/boxlite-ai/runner/pkg/api"
 	"github.com/boxlite-ai/runner/pkg/backend"
 	blclient "github.com/boxlite-ai/runner/pkg/boxlite"
-	"github.com/boxlite-ai/runner/pkg/cache"
 	"github.com/boxlite-ai/runner/pkg/runner"
 	"github.com/boxlite-ai/runner/pkg/runner/v2/executor"
 	"github.com/boxlite-ai/runner/pkg/runner/v2/healthcheck"
@@ -110,6 +109,8 @@ func run() int {
 		Logger:                       logger,
 		HomeDir:                      cfg.BoxliteHomeDir,
 		InsecureRegistries:           insecureRegs,
+		GhcrUsername:                 cfg.GhcrUsername,
+		GhcrToken:                    cfg.GhcrToken,
 		AWSRegion:                    cfg.AWSRegion,
 		AWSEndpointUrl:               cfg.AWSEndpointUrl,
 		AWSAccessKeyId:               cfg.AWSAccessKeyId,
@@ -117,6 +118,7 @@ func run() int {
 		VolumeCleanupInterval:        cfg.VolumeCleanupInterval,
 		VolumeCleanupDryRun:          cfg.VolumeCleanupDryRun,
 		VolumeCleanupExclusionPeriod: cfg.VolumeCleanupExclusionPeriod,
+		ToolboxReadyTimeout:          time.Duration(cfg.DaemonStartTimeoutSec) * time.Second,
 	})
 	if err != nil {
 		logger.Error("Error creating BoxLite client", "error", err)
@@ -126,9 +128,7 @@ func run() int {
 
 	logger.Info("BoxLite runtime initialized")
 
-	backupInfoCache := cache.NewBackupInfoCache(ctx, cfg.BackupInfoCacheRetention)
-
-	boxService := services.NewBoxService(logger, backupInfoCache, boxliteClient)
+	boxService := services.NewBoxService(logger, boxliteClient)
 
 	boxSyncService := services.NewBoxSyncService(services.BoxSyncServiceConfig{
 		Logger:   logger,
@@ -160,12 +160,10 @@ func run() int {
 	metricsCollector.Start(ctx)
 
 	_, err = runner.GetInstance(&runner.RunnerInstanceConfig{
-		Logger:             logger,
-		BackupInfoCache:    backupInfoCache,
-		SnapshotErrorCache: cache.NewSnapshotErrorCache(ctx, cfg.SnapshotErrorCacheRetention),
-		Boxlite:            boxliteClient,
-		BoxService:         boxService,
-		MetricsCollector:   metricsCollector,
+		Logger:           logger,
+		Boxlite:          boxliteClient,
+		BoxService:       boxService,
+		MetricsCollector: metricsCollector,
 	})
 	if err != nil {
 		logger.Error("Failed to initialize runner instance", "error", err)

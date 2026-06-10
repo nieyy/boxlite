@@ -17,11 +17,6 @@ import {
   HttpCode,
   UseInterceptors,
   Put,
-  NotFoundException,
-  Res,
-  Request,
-  RawBodyRequest,
-  Next,
   ParseBoolPipe,
 } from '@nestjs/common'
 import { CombinedAuthGuard } from '../../auth/combined-auth.guard'
@@ -56,9 +51,6 @@ import { RequiredOrganizationResourcePermissions } from '../../organization/deco
 import { OrganizationResourcePermission } from '../../organization/enums/organization-resource-permission.enum'
 import { OrganizationResourceActionGuard } from '../../organization/guards/organization-resource-action.guard'
 import { PortPreviewUrlDto, SignedPortPreviewUrlDto } from '../dto/port-preview-url.dto'
-import { IncomingMessage, ServerResponse } from 'http'
-import { NextFunction } from 'http-proxy-middleware/dist/types'
-import { LogProxy } from '../proxy/log-proxy'
 import { BadRequestError } from '../../exceptions/bad-request.exception'
 import { BoxStateUpdatedEvent } from '../events/box-state-updated.event'
 import { Audit, MASKED_AUDIT_VALUE, TypedRequest } from '../../audit/decorators/audit.decorator'
@@ -74,7 +66,6 @@ import { SkipThrottle } from '@nestjs/throttler'
 import { ThrottlerScope } from '../../common/decorators/throttler-scope.decorator'
 import { SshGatewayGuard } from '../guards/ssh-gateway.guard'
 import { ToolboxProxyUrlDto } from '../dto/toolbox-proxy-url.dto'
-import { UrlDto } from '../../common/dto/url.dto'
 import { InjectRedis } from '@nestjs-modules/ioredis'
 import { Redis } from 'ioredis'
 import { BOX_EVENT_CHANNEL } from '../../common/constants/constants'
@@ -177,7 +168,6 @@ export class BoxController {
       labels,
       includeErroredDeleted: includeErroredDestroyed,
       states,
-      snapshots,
       regions,
       minCpu,
       maxCpu,
@@ -201,7 +191,6 @@ export class BoxController {
         labels: labels ? JSON.parse(labels) : undefined,
         includeErroredDestroyed,
         states,
-        snapshots,
         regionIds: regions,
         minCpu,
         maxCpu,
@@ -248,7 +237,6 @@ export class BoxController {
     requestMetadata: {
       body: (req: TypedRequest<CreateBoxDto>) => ({
         name: req.body?.name,
-        snapshot: req.body?.snapshot,
         user: req.body?.user,
         env: req.body?.env
           ? Object.fromEntries(Object.keys(req.body?.env).map((key) => [key, MASKED_AUDIT_VALUE]))
@@ -262,10 +250,8 @@ export class BoxController {
         memory: req.body?.memory,
         disk: req.body?.disk,
         autoStopInterval: req.body?.autoStopInterval,
-        autoArchiveInterval: req.body?.autoArchiveInterval,
         autoDeleteInterval: req.body?.autoDeleteInterval,
         volumes: req.body?.volumes,
-        buildInfo: req.body?.buildInfo,
         networkBlockAll: req.body?.networkBlockAll,
         networkAllowList: req.body?.networkAllowList,
       }),
@@ -278,22 +264,12 @@ export class BoxController {
     const organization = authContext.organization
     let box: BoxDto
 
-    if (createBoxDto.buildInfo) {
-      if (createBoxDto.snapshot) {
-        throw new BadRequestError('Cannot specify a snapshot when using a build info entry')
-      }
-      box = await this.boxService.createFromBuildInfo(createBoxDto, organization)
-    } else {
-      if (createBoxDto.cpu || createBoxDto.gpu || createBoxDto.memory || createBoxDto.disk) {
-        throw new BadRequestError('Cannot specify Box resources when using a snapshot')
-      }
-      box = await this.boxService.createFromSnapshot(createBoxDto, organization)
-      if (box.state === BoxState.STARTED) {
-        return box
-      }
-
-      await this.waitForBoxStarted(box, 30)
+    box = await this.boxService.createFromTemplate(createBoxDto, organization)
+    if (box.state === BoxState.STARTED) {
+      return box
     }
+
+    await this.waitForBoxStarted(box, 30)
 
     return box
   }
@@ -462,7 +438,7 @@ export class BoxController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Box has been started or is being restored from archived state',
+    description: 'Box has been started',
     type: BoxDto,
   })
   @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_BOXES])
@@ -480,7 +456,7 @@ export class BoxController {
     const sbx = await this.boxService.start(boxIdOrName, authContext.organization)
     let box = await this.boxService.toBoxDto(sbx)
 
-    if (![BoxState.ARCHIVED, BoxState.RESTORING, BoxState.STARTED].includes(box.state)) {
+    if (![BoxState.RESTORING, BoxState.STARTED].includes(box.state)) {
       box = await this.waitForBoxStarted(box, 30)
     }
 
@@ -641,37 +617,6 @@ export class BoxController {
     )
   }
 
-  @Post(':boxIdOrName/backup')
-  @ApiOperation({
-    summary: 'Create box backup',
-    operationId: 'createBackup',
-  })
-  @ApiParam({
-    name: 'boxIdOrName',
-    description: 'ID or name of the box',
-    type: 'string',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Box backup has been initiated',
-    type: BoxDto,
-  })
-  @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_BOXES])
-  @UseGuards(BoxAccessGuard)
-  @Audit({
-    action: AuditAction.CREATE_BACKUP,
-    targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
-    targetIdFromResult: (result: BoxDto) => result?.id,
-  })
-  async createBackup(
-    @AuthContext() authContext: OrganizationAuthContext,
-    @Param('boxIdOrName') boxIdOrName: string,
-  ): Promise<BoxDto> {
-    const box = await this.boxService.createBackup(boxIdOrName, authContext.organizationId)
-    return this.boxService.toBoxDto(box)
-  }
-
   @Post(':boxIdOrName/public/:isPublic')
   @ApiOperation({
     summary: 'Update public status',
@@ -775,48 +720,6 @@ export class BoxController {
     return this.boxService.toBoxDto(box)
   }
 
-  @Post(':boxIdOrName/autoarchive/:interval')
-  @ApiOperation({
-    summary: 'Set box auto-archive interval',
-    operationId: 'setAutoArchiveInterval',
-  })
-  @ApiParam({
-    name: 'boxIdOrName',
-    description: 'ID or name of the box',
-    type: 'string',
-  })
-  @ApiParam({
-    name: 'interval',
-    description: 'Auto-archive interval in minutes (0 means the maximum interval will be used)',
-    type: 'number',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Auto-archive interval has been set',
-    type: BoxDto,
-  })
-  @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_BOXES])
-  @UseGuards(BoxAccessGuard)
-  @Audit({
-    action: AuditAction.SET_AUTO_ARCHIVE_INTERVAL,
-    targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
-    targetIdFromResult: (result: BoxDto) => result?.id,
-    requestMetadata: {
-      params: (req) => ({
-        interval: req.params.interval,
-      }),
-    },
-  })
-  async setAutoArchiveInterval(
-    @AuthContext() authContext: OrganizationAuthContext,
-    @Param('boxIdOrName') boxIdOrName: string,
-    @Param('interval') interval: number,
-  ): Promise<BoxDto> {
-    const box = await this.boxService.setAutoArchiveInterval(boxIdOrName, interval, authContext.organizationId)
-    return this.boxService.toBoxDto(box)
-  }
-
   @Post(':boxIdOrName/autodelete/:interval')
   @ApiOperation({
     summary: 'Set box auto-delete interval',
@@ -903,35 +806,6 @@ export class BoxController {
   //   )
   //   return BoxDto.fromBox(box, '')
   // }
-
-  @Post(':boxIdOrName/archive')
-  @HttpCode(200)
-  @SkipThrottle({ authenticated: true })
-  @ThrottlerScope('box-lifecycle')
-  @ApiOperation({
-    summary: 'Archive box',
-    operationId: 'archiveBox',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Box has been archived',
-    type: BoxDto,
-  })
-  @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_BOXES])
-  @UseGuards(BoxAccessGuard)
-  @Audit({
-    action: AuditAction.ARCHIVE,
-    targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
-    targetIdFromResult: (result: BoxDto) => result?.id,
-  })
-  async archiveBox(
-    @AuthContext() authContext: OrganizationAuthContext,
-    @Param('boxIdOrName') boxIdOrName: string,
-  ): Promise<BoxDto> {
-    const box = await this.boxService.archive(boxIdOrName, authContext.organizationId)
-    return this.boxService.toBoxDto(box)
-  }
 
   @Get(':boxIdOrName/ports/:port/preview-url')
   @ApiOperation({
@@ -1030,89 +904,6 @@ export class BoxController {
     @Param('token') token: string,
   ): Promise<void> {
     await this.boxService.expireSignedPreviewUrlToken(boxIdOrName, authContext.organizationId, token, port)
-  }
-
-  @Get(':boxIdOrName/build-logs')
-  @ApiOperation({
-    summary: 'Get build logs',
-    operationId: 'getBuildLogs',
-    deprecated: true,
-    description: 'This endpoint is deprecated. Use `getBuildLogsUrl` instead.',
-  })
-  @ApiParam({
-    name: 'boxIdOrName',
-    description: 'ID or name of the box',
-    type: 'string',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Build logs stream',
-  })
-  @ApiQuery({
-    name: 'follow',
-    required: false,
-    type: Boolean,
-    description: 'Whether to follow the logs stream',
-  })
-  @UseGuards(BoxAccessGuard)
-  async getBuildLogs(
-    @Request() req: RawBodyRequest<IncomingMessage>,
-    @Res() res: ServerResponse<IncomingMessage>,
-    @Next() next: NextFunction,
-    @AuthContext() authContext: OrganizationAuthContext,
-    @Param('boxIdOrName') boxIdOrName: string,
-    @Query('follow', new ParseBoolPipe({ optional: true })) follow?: boolean,
-  ): Promise<void> {
-    const box = await this.boxService.findOneByIdOrName(boxIdOrName, authContext.organizationId)
-    if (!box.runnerId) {
-      throw new NotFoundException(`Box with ID or name ${boxIdOrName} has no runner assigned`)
-    }
-
-    if (!box.buildInfo) {
-      throw new NotFoundException(`Box with ID or name ${boxIdOrName} has no build info`)
-    }
-
-    const runner = await this.runnerService.findOneOrFail(box.runnerId)
-
-    if (!runner.apiUrl) {
-      throw new NotFoundException(`Runner for box ${boxIdOrName} has no API URL`)
-    }
-
-    const logProxy = new LogProxy(
-      runner.apiUrl,
-      box.buildInfo.snapshotRef.split(':')[0],
-      runner.apiKey,
-      follow === true,
-      req,
-      res,
-      next,
-    )
-    return logProxy.create()
-  }
-
-  @Get(':boxIdOrName/build-logs-url')
-  @ApiOperation({
-    summary: 'Get build logs URL',
-    operationId: 'getBuildLogsUrl',
-  })
-  @ApiParam({
-    name: 'boxIdOrName',
-    description: 'ID or name of the box',
-    type: 'string',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Build logs URL',
-    type: UrlDto,
-  })
-  @UseGuards(BoxAccessGuard)
-  async getBuildLogsUrl(
-    @AuthContext() authContext: OrganizationAuthContext,
-    @Param('boxIdOrName') boxIdOrName: string,
-  ): Promise<UrlDto> {
-    const buildLogsUrl = await this.boxService.getBuildLogsUrl(boxIdOrName, authContext.organizationId)
-
-    return new UrlDto(buildLogsUrl)
   }
 
   @Post(':boxIdOrName/ssh-access')
@@ -1259,7 +1050,7 @@ export class BoxController {
           clearTimeout(timeout)
           resolve(this.boxService.toBoxDto(event.box))
         }
-        if (event.box.state === BoxState.ERROR || event.box.state === BoxState.BUILD_FAILED) {
+        if (event.box.state === BoxState.ERROR) {
           this.boxCallbacks.delete(box.id)
           clearTimeout(timeout)
           reject(new BadRequestError(`Box failed to start: ${event.box.errorReason}`))

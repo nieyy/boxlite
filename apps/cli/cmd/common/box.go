@@ -28,9 +28,9 @@ func RequireStartedState(box *apiclient.Box) error {
 	case apiclient.BOXSTATE_STOPPED:
 		return fmt.Errorf("box is stopped. Start it with: boxlite box start %s", boxRef)
 	case apiclient.BOXSTATE_ARCHIVED:
-		return fmt.Errorf("box is archived. Start it with: boxlite box start %s", boxRef)
+		return fmt.Errorf("box is archived and cannot be used")
 	case apiclient.BOXSTATE_ARCHIVING:
-		return fmt.Errorf("box is archiving. Start it with: boxlite box start %s", boxRef)
+		return fmt.Errorf("box is archiving and cannot be used")
 	case apiclient.BOXSTATE_STARTING:
 		return fmt.Errorf("box is starting. Please wait for it to be ready")
 	case apiclient.BOXSTATE_STOPPING:
