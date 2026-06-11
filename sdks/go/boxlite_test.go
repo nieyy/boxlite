@@ -201,6 +201,7 @@ func TestBoxOptions(t *testing.T) {
 	WithEnv("FOO", "bar")(cfg)
 	WithVolume("/host", "/guest")(cfg)
 	WithVolumeReadOnly("/ro-host", "/ro-guest")(cfg)
+	WithPort(8080, 3000)(cfg)
 	WithWorkDir("/app")(cfg)
 	WithEntrypoint("/bin/sh")(cfg)
 	WithCmd("-c", "echo hi")(cfg)
@@ -231,6 +232,22 @@ func TestBoxOptions(t *testing.T) {
 	if !cfg.volumes[1].readOnly {
 		t.Error("second volume should be read-only")
 	}
+	if len(cfg.ports) != 1 {
+		t.Fatalf("ports: got %d", len(cfg.ports))
+	}
+	if cfg.ports[0].Host != 8080 {
+		t.Fatalf("port host: got %d", cfg.ports[0].Host)
+	}
+	if cfg.ports[0].Guest != 3000 || cfg.ports[0].Protocol != PortProtocolTcp || cfg.ports[0].HostIP != "" {
+		t.Errorf("port: got guest=%d protocol=%s host_ip=%q", cfg.ports[0].Guest, cfg.ports[0].Protocol, cfg.ports[0].HostIP)
+	}
+	cPort, err := cfg.ports[0].toCSpec()
+	if err != nil {
+		t.Fatalf("toCSpec: %v", err)
+	}
+	if cPort.host_port != 8080 || cPort.guest_port != 3000 || cPort.protocol != PortProtocolTcp || cPort.host_ip != "" {
+		t.Errorf("c port: got host_port=%d guest_port=%d protocol=%s host_ip=%q", cPort.host_port, cPort.guest_port, cPort.protocol, cPort.host_ip)
+	}
 	if cfg.workDir != "/app" {
 		t.Errorf("workDir: got %q", cfg.workDir)
 	}
@@ -248,6 +265,67 @@ func TestBoxOptions(t *testing.T) {
 	}
 	if cfg.secrets[0].Name != "openai" {
 		t.Errorf("secret name: got %q", cfg.secrets[0].Name)
+	}
+}
+
+func TestWithPortSpec(t *testing.T) {
+	cfg := &boxConfig{}
+	WithPortSpec(PortSpec{
+		Host:     5353,
+		Guest:    53,
+		Protocol: PortProtocolTcp,
+	})(cfg)
+
+	if len(cfg.ports) != 1 {
+		t.Fatalf("ports: got %d", len(cfg.ports))
+	}
+
+	cPort, err := cfg.ports[0].toCSpec()
+	if err != nil {
+		t.Fatalf("toCSpec: %v", err)
+	}
+	if cPort.host_port != 5353 || cPort.guest_port != 53 || cPort.protocol != PortProtocolTcp || cPort.host_ip != "" {
+		t.Errorf("c port: got host_port=%d guest_port=%d protocol=%s host_ip=%q", cPort.host_port, cPort.guest_port, cPort.protocol, cPort.host_ip)
+	}
+}
+
+func TestPortSpecRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name string
+		port PortSpec
+	}{
+		{"unset protocol", PortSpec{Host: 8080, Guest: 80}},
+		{"udp unsupported", PortSpec{Host: 5353, Guest: 53, Protocol: PortProtocolUdp}},
+		{"host ip unsupported", PortSpec{Host: 8080, Guest: 80, Protocol: PortProtocolTcp, HostIP: "127.0.0.1"}},
+		{"guest zero", PortSpec{Host: 8080, Guest: 0, Protocol: PortProtocolTcp}},
+		{"guest too high", PortSpec{Host: 8080, Guest: 65536, Protocol: PortProtocolTcp}},
+		{"host negative", PortSpec{Host: -1, Guest: 80, Protocol: PortProtocolTcp}},
+		{"host too high", PortSpec{Host: 65536, Guest: 80, Protocol: PortProtocolTcp}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.port.toCSpec(); err == nil {
+				t.Fatal("toCSpec should reject invalid port spec")
+			}
+		})
+	}
+}
+
+func TestPortProtocolString(t *testing.T) {
+	tests := []struct {
+		protocol PortProtocol
+		want     string
+	}{
+		{PortProtocolTcp, "TCP"},
+		{PortProtocolUdp, "UDP"},
+		{PortProtocolUnknown, "Unknown"},
+	}
+
+	for _, tt := range tests {
+		if got := tt.protocol.String(); got != tt.want {
+			t.Errorf("portProtocol(%d).String(): got %q, want %q", tt.protocol, got, tt.want)
+		}
 	}
 }
 
