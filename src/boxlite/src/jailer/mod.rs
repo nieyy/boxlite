@@ -398,6 +398,22 @@ impl<S: Sandbox> Jail for Jailer<S> {
             binary.to_path_buf()
         };
 
+        // copy_shim_to_box() created box/bin and the copied shim above, but
+        // context() computed the bind list *before* that — so box/bin (which
+        // didn't exist yet) was skipped. Add it now, read-only, otherwise bwrap
+        // can't see the shim binary it is about to exec (execvp ENOENT).
+        #[allow(clippy::collapsible_if)]
+        if self.security.jailer_enabled {
+            if let Some(bin_dir) = effective_binary.parent().filter(|d| d.exists()) {
+                if !ctx.paths.iter().any(|pa| pa.path == bin_dir) {
+                    ctx.paths.push(PathAccess {
+                        path: bin_dir.to_path_buf(),
+                        writable: false,
+                    });
+                }
+            }
+        }
+
         // Start with a bare command. Sandbox.apply() modifies it in-place.
         let mut cmd = Command::new(&effective_binary);
         cmd.args(args);
