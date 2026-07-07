@@ -460,12 +460,33 @@ When `SSH_GATEWAY_ENABLE=true`, the runner also listens on a configurable
 TCP port (`pkg/sshgateway/config.go::GetSSHGatewayPort`). Clients
 authenticate with a single shared public key configured on the runner
 (`GetSSHPublicKey`), and the **SSH username is interpreted as the
-box ID**. Once authenticated, the handler starts a command in the box via
-`r.Boxlite.StartExecution(...)` and wires the SSH channel to that
-execution's stdin/stdout/stderr.
+box ID**. Once authenticated, the handler routes `session` channels
+directly to the BoxLite exec bridge (`pkg/sshgateway/service.go::runExec`)
+— the same path used by the WebSocket terminal — without a separate inner
+SSH connection.
 
-Do not expose the gateway port directly to untrusted clients without
-auditing this path.
+Supported operations:
+
+- **interactive shell** — `ssh -t <boxId>` opens `/bin/sh` with a PTY (required).
+- **PTY exec** — `ssh -t <boxId> <command>` runs the command inside the box with a PTY
+  allocated by the client (`-t` flag). Sessions run as `root` by default (`Service.sshUserOrDefault()`),
+  the typical user for standard container images; set `sshUser` explicitly to restrict
+  to a non-root unix user.
+
+Not supported:
+
+- **Non-PTY exec and shell**: `ssh <boxId> <command>` without the `-t` flag is **rejected**
+  with a clear error message written to stderr. The underlying exec pipeline converts guest
+  stdout/stderr bytes to String via `String::from_utf8_lossy`, which silently corrupts any
+  non-UTF-8 byte sequences. Binary-producing commands (e.g.
+  `ssh host 'cat archive.tar' > out.tar`, `base64 -d`, legacy `scp -t`/`scp -f` exec mode)
+  would produce silently corrupted output without a PTY. Always use `-t` for interactive or
+  command sessions; use the `/v1/boxes/:boxId/files` endpoint for binary file transfers.
+- **Non-session channels** (e.g. `direct-tcpip` port forwarding): rejected with `UnknownChannelType`.
+- **Binary subsystems** (e.g. SFTP via `sftp`, `scp -s`, VS Code Remote): the exec stream pipeline
+  converts guest output bytes to UTF-8 strings internally (`String::from_utf8_lossy`), which
+  silently corrupts non-UTF-8 binary protocol bytes. Subsystem requests are rejected with a clean
+  protocol error to prevent silent data corruption.
 
 ---
 

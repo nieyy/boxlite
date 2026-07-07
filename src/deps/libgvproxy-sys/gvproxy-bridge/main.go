@@ -200,8 +200,9 @@ type GvproxyConfig struct {
 	CACertPEM        string         `json:"ca_cert_pem,omitempty"`
 	CAKeyPEM         string         `json:"ca_key_pem,omitempty"`
 	// ControlSocketPath, when set, binds gvproxy's ServicesMux (dynamic port
-	// forwarding / DNS / DHCP leases / stats / cam) to a host unix socket the
-	// boxlite core dials. Empty => the services API is not exposed.
+	// forwarding — including the runner's real-SSH expose/unexpose calls —
+	// DNS / DHCP leases / stats / cam) to a host unix socket the boxlite core
+	// dials. Empty => the services API is not exposed.
 	ControlSocketPath string `json:"control_socket_path,omitempty"`
 }
 
@@ -279,11 +280,11 @@ var (
 	nextID      int64 = 1
 )
 
-//export gvproxy_create
-//
 // On failure (return -1), the underlying error message is written to `*errOut`
 // as a heap-allocated C string. Caller must free it via gvproxy_free_string.
 // `errOut` may be nil if the caller doesn't want the message.
+//
+//export gvproxy_create
 func gvproxy_create(configJSON *C.char, errOut **C.char) C.longlong {
 	// setErr surfaces the underlying error back to the FFI caller so the
 	// Rust runtime can include it in the user-visible BoxliteError message
@@ -448,7 +449,6 @@ func gvproxy_create(configJSON *C.char, errOut **C.char) C.longlong {
 			initErr <- err
 			return
 		}
-		initErr <- nil
 
 		// Override TCP handler with AllowNet filter and/or MITM secret substitution
 		if len(config.AllowNet) > 0 || instance.secretMatcher != nil {
@@ -466,29 +466,24 @@ func gvproxy_create(configJSON *C.char, errOut **C.char) C.longlong {
 		instance.vn = vn
 		instance.vnMu.Unlock()
 
-		// Bind gvproxy's ServicesMux to a host unix socket so the boxlite core
-		// can drive dynamic port forwarding / DNS / leases on the running box.
-		// ServicesMux (not Mux) excludes the raw L2 /connect, so the VM's NIC
-		// can never be attached through this socket.
-		var controlListener net.Listener
+		// Bind gvproxy's ServicesMux (forwarder expose/unexpose, DNS, DHCP
+		// leases, stats, tunnel, and the runner's real-SSH port forwarding)
+		// to a host unix socket. ServicesMux (not Mux) excludes the raw L2
+		// /connect, so the VM's NIC can never be attached through this socket.
+		//
+		// Only skipped when the caller leaves ControlSocketPath empty; once a
+		// path is given, a bind failure is fatal to gvproxy_create (not just
+		// logged) rather than shipping a "successful" instance whose
+		// ServicesMux-dependent features (including real-SSH) silently never
+		// work — that would otherwise surface as a confusing runtime failure
+		// much later instead of an init-time error.
 		if config.ControlSocketPath != "" {
-			// Remove a stale socket from a previous crash (path is unique per box).
-			if rmErr := os.Remove(config.ControlSocketPath); rmErr != nil && !os.IsNotExist(rmErr) {
-				logrus.WithFields(logrus.Fields{"error": rmErr, "path": config.ControlSocketPath}).Warn("Failed to remove existing services socket")
-			}
-			l, lErr := net.Listen("unix", config.ControlSocketPath)
-			if lErr != nil {
-				logrus.WithFields(logrus.Fields{"error": lErr, "path": config.ControlSocketPath}).Error("Failed to bind gvproxy services socket")
-			} else {
-				controlListener = l
-				logrus.WithField("path", config.ControlSocketPath).Info("Serving gvproxy ServicesMux")
-				go func() {
-					if sErr := http.Serve(l, vn.ServicesMux()); sErr != nil && ctx.Err() == nil {
-						logrus.WithError(sErr).Error("gvproxy services HTTP server exited")
-					}
-				}()
+			if err := startControlServer(ctx, vn, config.ControlSocketPath); err != nil {
+				initErr <- fmt.Errorf("failed to start gvproxy control server on %q: %w", config.ControlSocketPath, err)
+				return
 			}
 		}
+		initErr <- nil
 
 		// Platform-specific packet handling
 		if runtime.GOOS == "darwin" {
@@ -547,12 +542,8 @@ func gvproxy_create(configJSON *C.char, errOut **C.char) C.longlong {
 		// Wait for context cancellation
 		<-ctx.Done()
 
-		// Cleanup
-		if controlListener != nil {
-			// Closing the listener unblocks the http.Serve goroutine.
-			controlListener.Close()
-			os.Remove(config.ControlSocketPath)
-		}
+		// Cleanup: startControlServer's own goroutine (started above) closes
+		// its listener and removes its socket file on the same ctx.Done().
 		if runtime.GOOS == "darwin" && conn != nil {
 			conn.Close()
 		} else if listener != nil {
@@ -583,6 +574,36 @@ func gvproxy_create(configJSON *C.char, errOut **C.char) C.longlong {
 
 	logrus.Info("Created gvproxy instance", "id", id, "socket", socketPath, "protocol", protocol)
 	return C.longlong(id)
+}
+
+// startControlServer creates the Unix-socket HTTP server exposing gvproxy's
+// ServicesMux (forwarder expose/unexpose, DNS, DHCP leases, stats, tunnel —
+// including the runner's POST /services/forwarder/expose calls that route
+// real-SSH traffic to the guest sshd). The caller treats a non-nil error as
+// fatal to gvproxy_create: a box created without a working control socket can
+// never enable real-SSH access later, and ServicesMux features become
+// unreachable for the box's lifetime.
+func startControlServer(ctx context.Context, vn *virtualnetwork.VirtualNetwork, controlSockPath string) error {
+	if err := os.Remove(controlSockPath); err != nil && !os.IsNotExist(err) {
+		logrus.WithFields(logrus.Fields{"error": err, "path": controlSockPath}).Warn("Failed to remove stale gvproxy control socket")
+	}
+	controlListener, err := net.Listen("unix", controlSockPath)
+	if err != nil {
+		return err
+	}
+	controlServer := &http.Server{Handler: vn.ServicesMux()}
+	go func() {
+		if serveErr := controlServer.Serve(controlListener); serveErr != nil && ctx.Err() == nil {
+			logrus.WithField("error", serveErr).Error("gvproxy control HTTP server exited unexpectedly")
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		controlServer.Close()
+		os.Remove(controlSockPath)
+	}()
+	logrus.WithField("path", controlSockPath).Info("gvproxy control HTTP server started (ServicesMux)")
+	return nil
 }
 
 //export gvproxy_free_string

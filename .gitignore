@@ -223,3 +223,6 @@ regions-*.png
 runners-*.png
 term-*.png
 test-*.png
+
+.nx/cache
+.nx/workspace-data

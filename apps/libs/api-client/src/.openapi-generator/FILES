@@ -76,6 +76,7 @@ docs/CreateRegion.md
 docs/CreateRegionResponse.md
 docs/CreateRunner.md
 docs/CreateRunnerResponse.md
+docs/CreateSshAccessBodyDto.md
 docs/CreateUser.md
 docs/CreateVolume.md
 docs/HealthApi.md
@@ -201,6 +202,7 @@ models/create-region-response.ts
 models/create-region.ts
 models/create-runner-response.ts
 models/create-runner.ts
+models/create-ssh-access-body-dto.ts
 models/create-user.ts
 models/create-volume.ts
 models/health-controller-check200-response-info-value.ts

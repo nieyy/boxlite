@@ -318,7 +318,9 @@ impl GuestRootfsManager {
             elapsed_ms = hash_start.elapsed().as_millis() as u64,
             "get_or_create: cached_guest_hash done"
         );
-        let version_key = Self::version_key(&digest, guest_hash);
+        let ssh_hash = Self::ssh_assets_hash()?;
+        let combined_hash = Self::combined_guest_hash(guest_hash, &ssh_hash);
+        let version_key = Self::version_key(&digest, &combined_hash);
 
         if let Some(disk) = self.find(&version_key) {
             tracing::info!(
@@ -435,7 +437,9 @@ impl GuestRootfsManager {
         // The compile-time hash (from build.rs) may be stale if the guest
         // binary was rebuilt after boxlite was compiled.
         let actual_hash = Self::sha256_file(&guest_bin)?;
-        let actual_version_key = Self::version_key(digest, &actual_hash);
+        let ssh_hash = Self::ssh_assets_hash()?;
+        let actual_combined_hash = Self::combined_guest_hash(&actual_hash, &ssh_hash);
+        let actual_version_key = Self::version_key(digest, &actual_combined_hash);
 
         if actual_version_key != expected_version_key {
             if option_env!("BOXLITE_GUEST_HASH").is_some() {
@@ -465,6 +469,55 @@ impl GuestRootfsManager {
             elapsed_ms = inject_start.elapsed().as_millis() as u64,
             "build_and_install: inject guest binary done"
         );
+
+        // Inject static sshd binary (optional — skipped if not built yet).
+        // When present, boxlite-enable-ssh copies it from /boxlite/bin/sshd
+        // into the container rootfs at /usr/local/sbin/boxlite-sshd.
+        // Its content is folded into the version key via ssh_assets_hash(),
+        // so rebuilding it invalidates the cache.
+        match util::find_binary("boxlite-sshd") {
+            Ok(sshd_bin) => {
+                inject_file_into_ext4(&staged_path, &sshd_bin, "boxlite/bin/sshd")?;
+                tracing::info!("build_and_install: inject boxlite-sshd done");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "boxlite-sshd not found, SSH access will be unavailable: {}",
+                    e
+                );
+            }
+        }
+
+        match util::find_binary("boxlite-ssh-keygen") {
+            Ok(keygen_bin) => {
+                inject_file_into_ext4(&staged_path, &keygen_bin, "boxlite/bin/ssh-keygen")?;
+                tracing::info!("build_and_install: inject boxlite-ssh-keygen done");
+            }
+            Err(e) => {
+                tracing::warn!("boxlite-ssh-keygen not found: {}", e);
+            }
+        }
+
+        // Inject SSH management scripts (embedded at compile time).
+        // They are written to a temp file and injected; inject_file_into_ext4
+        // sets mode 0100555 (executable) for all injected files.
+        {
+            use std::io::Write;
+
+            for (data, guest_path) in Self::SSH_SCRIPTS {
+                let mut tmp = tempfile::NamedTempFile::new_in(temp.path()).map_err(|e| {
+                    BoxliteError::Storage(format!("Failed to create temp file for script: {}", e))
+                })?;
+                tmp.write_all(data).map_err(|e| {
+                    BoxliteError::Storage(format!("Failed to write script to temp file: {}", e))
+                })?;
+                tmp.flush().map_err(|e| {
+                    BoxliteError::Storage(format!("Failed to flush script temp file: {}", e))
+                })?;
+                inject_file_into_ext4(&staged_path, tmp.path(), guest_path)?;
+            }
+            tracing::info!("build_and_install: inject SSH management scripts done");
+        }
 
         // Atomic install: use the actual version key (may differ from expected)
         let staged_disk = Disk::new(staged_path, DiskFormat::Ext4, false);
@@ -557,19 +610,23 @@ impl GuestRootfsManager {
     /// Garbage-collect stale guest rootfs entries.
     ///
     /// Uses DB records to identify rootfs entries. Preserves entries whose
-    /// version key contains the current guest binary hash (valid for future boxes).
-    /// Only deletes entries with outdated guest hashes that no existing box references.
+    /// version key contains the current guest binary + SSH assets hash
+    /// (valid for future boxes). Only deletes entries with outdated hashes
+    /// that no existing box references.
     ///
     /// Returns the number of entries removed.
     pub fn gc(&self, boxes_dir: &Path) -> BoxliteResult<usize> {
         let gc_start = std::time::Instant::now();
 
-        // Compute current guest hash prefix to identify current-version entries.
-        // Version keys are "{image_12}-{guest_12}", so entries whose name ends
-        // with the current guest hash suffix are still valid for future boxes.
-        let current_guest_suffix = match self.cached_guest_hash() {
-            Ok(hash) => {
-                let g = &hash[..12.min(hash.len())];
+        // Compute current combined-hash prefix to identify current-version
+        // entries. Version keys are "{image_12}-{combined_12}", so entries
+        // whose name ends with the current combined-hash suffix are still
+        // valid for future boxes.
+        let current_guest_suffix = match self.cached_guest_hash().and_then(|guest_hash| {
+            Self::ssh_assets_hash().map(|ssh_hash| Self::combined_guest_hash(guest_hash, &ssh_hash))
+        }) {
+            Ok(combined_hash) => {
+                let g = &combined_hash[..12.min(combined_hash.len())];
                 format!("-{}", g)
             }
             Err(e) => {
@@ -766,12 +823,73 @@ impl GuestRootfsManager {
         Ok(hash)
     }
 
-    /// Compute the version key from image digest and guest binary hash.
-    fn version_key(digest: &str, guest_hash: &str) -> String {
+    /// Compute the version key from image digest and a combined content hash.
+    fn version_key(digest: &str, combined_hash: &str) -> String {
         let d = digest.strip_prefix("sha256:").unwrap_or(digest);
         let d = &d[..12.min(d.len())];
-        let g = &guest_hash[..12.min(guest_hash.len())];
+        let g = &combined_hash[..12.min(combined_hash.len())];
         format!("{}-{}", d, g)
+    }
+
+    /// SSH management scripts embedded at compile time, paired with their
+    /// destination path inside the guest rootfs. Shared between injection
+    /// (`build_and_install`) and `ssh_assets_hash` so both see the same bytes.
+    const SSH_SCRIPTS: &'static [(&'static [u8], &'static str)] = &[
+        (
+            include_bytes!("../../../guest/scripts/boxlite-enable-ssh"),
+            "usr/local/bin/boxlite-enable-ssh",
+        ),
+        (
+            include_bytes!("../../../guest/scripts/boxlite-disable-ssh"),
+            "usr/local/bin/boxlite-disable-ssh",
+        ),
+        (
+            include_bytes!("../../../guest/scripts/boxlite-ensure-ssh"),
+            "usr/local/bin/boxlite-ensure-ssh",
+        ),
+    ];
+
+    /// Hash of the SSH assets injected into the guest rootfs (sshd binary,
+    /// ssh-keygen binary, management scripts).
+    ///
+    /// Folded into the rootfs version key via `combined_guest_hash` so that
+    /// rebuilding any of these assets invalidates the cache instead of being
+    /// silently served from a rootfs built with a stale sshd/ssh-keygen/script.
+    /// A missing local-dev binary hashes to a fixed placeholder rather than
+    /// being skipped, so the result is deterministic regardless of which
+    /// binaries happen to be built on a given machine.
+    fn ssh_assets_hash() -> BoxliteResult<String> {
+        use sha2::{Digest, Sha256};
+
+        const MISSING_BINARY_PLACEHOLDER: &str = "missing";
+
+        let mut hasher = Sha256::new();
+        for binary_name in ["boxlite-sshd", "boxlite-ssh-keygen"] {
+            match util::find_binary(binary_name) {
+                Ok(bin_path) => hasher.update(Self::sha256_file(&bin_path)?.as_bytes()),
+                Err(_) => hasher.update(MISSING_BINARY_PLACEHOLDER.as_bytes()),
+            }
+        }
+        for (data, _) in Self::SSH_SCRIPTS {
+            hasher.update(data);
+        }
+
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    /// Combine the guest binary hash with the SSH assets hash into a single
+    /// hash used for the rootfs version key, so a change to either
+    /// invalidates the cache. Re-hashes the concatenation (rather than
+    /// truncating and concatenating both hashes) to keep the version key at
+    /// its existing two-segment `{digest}-{hash}` format.
+    fn combined_guest_hash(guest_hash: &str, ssh_assets_hash: &str) -> String {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        hasher.update(guest_hash.as_bytes());
+        hasher.update(b":");
+        hasher.update(ssh_assets_hash.as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 }
 
@@ -834,6 +952,43 @@ mod tests {
     fn test_version_key_short_inputs() {
         let key = GuestRootfsManager::version_key("abc", "def");
         assert_eq!(key, "abc-def");
+    }
+
+    #[test]
+    fn test_combined_guest_hash_changes_when_ssh_assets_hash_changes() {
+        // Reproducer for the rootfs cache bug: the version key used to be
+        // derived from the guest binary hash alone, so rebuilding
+        // boxlite-sshd/boxlite-ssh-keygen/the SSH scripts without touching
+        // the guest binary produced an identical version key — get_or_create
+        // would then serve a stale rootfs from cache with outdated SSH
+        // assets. combined_guest_hash must fold in the SSH assets hash so
+        // any change there changes the resulting hash even when the guest
+        // binary hash is unchanged.
+        let guest_hash = "same-guest-hash";
+        let combined_v1 = GuestRootfsManager::combined_guest_hash(guest_hash, "ssh-assets-v1");
+        let combined_v2 = GuestRootfsManager::combined_guest_hash(guest_hash, "ssh-assets-v2");
+        assert_ne!(
+            combined_v1, combined_v2,
+            "combined hash must change when SSH assets change, even if the guest binary hash doesn't"
+        );
+    }
+
+    #[test]
+    fn test_combined_guest_hash_changes_when_guest_hash_changes() {
+        let ssh_hash = "same-ssh-assets-hash";
+        let combined_v1 = GuestRootfsManager::combined_guest_hash("guest-hash-v1", ssh_hash);
+        let combined_v2 = GuestRootfsManager::combined_guest_hash("guest-hash-v2", ssh_hash);
+        assert_ne!(combined_v1, combined_v2);
+    }
+
+    #[test]
+    fn test_ssh_assets_hash_is_deterministic() {
+        // ssh_assets_hash reads the same embedded scripts and (in this test
+        // environment) consistently misses boxlite-sshd/boxlite-ssh-keygen,
+        // so two calls in the same process must agree.
+        let first = GuestRootfsManager::ssh_assets_hash().unwrap();
+        let second = GuestRootfsManager::ssh_assets_hash().unwrap();
+        assert_eq!(first, second);
     }
 
     #[test]

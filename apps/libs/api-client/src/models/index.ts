@@ -47,6 +47,7 @@ export * from './create-region';
 export * from './create-region-response';
 export * from './create-runner';
 export * from './create-runner-response';
+export * from './create-ssh-access-body-dto';
 export * from './create-user';
 export * from './create-volume';
 export * from './health-controller-check200-response';

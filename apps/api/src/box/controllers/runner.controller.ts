@@ -232,7 +232,7 @@ export class RunnerController {
   @Audit({
     action: AuditAction.UPDATE_SCHEDULING,
     targetType: AuditTarget.RUNNER,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
     requestMetadata: {
       body: (req: TypedRequest<{ unschedulable: boolean }>) => ({
         unschedulable: req.body?.unschedulable,
@@ -269,7 +269,7 @@ export class RunnerController {
   @Audit({
     action: AuditAction.UPDATE_DRAINING,
     targetType: AuditTarget.RUNNER,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
     requestMetadata: {
       body: (req: TypedRequest<{ draining: boolean }>) => ({
         draining: req.body?.draining,
@@ -305,7 +305,7 @@ export class RunnerController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.RUNNER,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   @ApiHeader(CustomHeaders.ORGANIZATION_ID)
   @UseGuards(OrganizationResourceActionGuard, RunnerAccessGuard)

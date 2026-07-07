@@ -116,7 +116,7 @@ export class OrganizationController {
   @Audit({
     action: AuditAction.ACCEPT,
     targetType: AuditTarget.ORGANIZATION_INVITATION,
-    targetIdFromRequest: (req) => req.params.invitationId,
+    targetIdFromRequest: (req) => req.params.invitationId as string,
   })
   async acceptInvitation(
     @AuthContext() authContext: IAuthContext,
@@ -153,7 +153,7 @@ export class OrganizationController {
   @Audit({
     action: AuditAction.DECLINE,
     targetType: AuditTarget.ORGANIZATION_INVITATION,
-    targetIdFromRequest: (req) => req.params.invitationId,
+    targetIdFromRequest: (req) => req.params.invitationId as string,
   })
   async declineInvitation(
     @AuthContext() authContext: IAuthContext,
@@ -269,7 +269,7 @@ export class OrganizationController {
   @Audit({
     action: AuditAction.UPDATE,
     targetType: AuditTarget.ORGANIZATION,
-    targetIdFromRequest: (req) => req.params.organizationId,
+    targetIdFromRequest: (req) => req.params.organizationId as string,
     requestMetadata: {
       body: (req: TypedRequest<UpdateOrganizationDefaultRegionDto>) => ({
         defaultRegionId: req.body?.defaultRegionId,
@@ -345,7 +345,7 @@ export class OrganizationController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.ORGANIZATION,
-    targetIdFromRequest: (req) => req.params.organizationId,
+    targetIdFromRequest: (req) => req.params.organizationId as string,
   })
   async delete(@Param('organizationId') organizationId: string): Promise<void> {
     return this.organizationService.delete(organizationId)
@@ -399,7 +399,7 @@ export class OrganizationController {
   @Audit({
     action: AuditAction.SUSPEND,
     targetType: AuditTarget.ORGANIZATION,
-    targetIdFromRequest: (req) => req.params.organizationId,
+    targetIdFromRequest: (req) => req.params.organizationId as string,
     requestMetadata: {
       body: (req: TypedRequest<OrganizationSuspensionDto>) => ({
         reason: req.body?.reason,
@@ -438,7 +438,7 @@ export class OrganizationController {
   @Audit({
     action: AuditAction.UNSUSPEND,
     targetType: AuditTarget.ORGANIZATION,
-    targetIdFromRequest: (req) => req.params.organizationId,
+    targetIdFromRequest: (req) => req.params.organizationId as string,
   })
   async unsuspend(@Param('organizationId') organizationId: string): Promise<void> {
     return this.organizationService.unsuspend(organizationId)
@@ -515,7 +515,7 @@ export class OrganizationController {
   @Audit({
     action: AuditAction.UPDATE_BOX_DEFAULT_LIMITED_NETWORK_EGRESS,
     targetType: AuditTarget.ORGANIZATION,
-    targetIdFromRequest: (req) => req.params.organizationId,
+    targetIdFromRequest: (req) => req.params.organizationId as string,
     requestMetadata: {
       body: (req: TypedRequest<OrganizationBoxDefaultLimitedNetworkEgressDto>) => ({
         boxDefaultLimitedNetworkEgress: req.body?.boxDefaultLimitedNetworkEgress,

@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: AGPL-3.0
  */
 
+import axios, { AxiosInstance } from 'axios'
+import axiosRetry from 'axios-retry'
 import { Injectable, Logger } from '@nestjs/common'
 import { InjectRepository } from '@nestjs/typeorm'
 import { Repository, IsNull } from 'typeorm'
@@ -19,6 +21,10 @@ import { JobService } from '../services/job.service'
 import { BoxRepository } from '../repositories/box.repository'
 import { UpdateNetworkSettingsDTO, RecoverBoxDTO } from '@boxlite-ai/runner-api-client'
 
+// Network error codes worth an automatic retry (transient connectivity blips).
+// Mirrors RunnerAdapterV0's retry condition.
+const RETRYABLE_NETWORK_ERROR_CODES = ['ECONNRESET', 'ETIMEDOUT']
+
 /**
  * RunnerAdapterV2 implements RunnerAdapter for v2 runners.
  * Instead of making direct API calls to the runner, it creates jobs in the database
@@ -28,6 +34,9 @@ import { UpdateNetworkSettingsDTO, RecoverBoxDTO } from '@boxlite-ai/runner-api-
 export class RunnerAdapterV2 implements RunnerAdapter {
   private readonly logger = new Logger(RunnerAdapterV2.name)
   private runner: Runner
+  // axiosInstance is only set when runner.apiUrl is present; used for direct
+  // runner HTTP calls such as enableSSHAccess / disableSSHAccess.
+  private axiosInstance: AxiosInstance | null = null
 
   constructor(
     private readonly boxRepository: BoxRepository,
@@ -38,6 +47,28 @@ export class RunnerAdapterV2 implements RunnerAdapter {
 
   async init(runner: Runner): Promise<void> {
     this.runner = runner
+    if (runner.apiUrl) {
+      this.axiosInstance = axios.create({
+        baseURL: runner.apiUrl,
+        headers: {
+          Authorization: `Bearer ${runner.apiKey}`,
+        },
+        timeout: 30 * 1000,
+      })
+      // enableSSHAccess / disableSSHAccess are direct runner HTTP calls (unlike
+      // the other methods, which go through the job queue and get retried by
+      // the polling runner itself) — without this, a transient network blip
+      // fails the request with no automatic retry.
+      axiosRetry(this.axiosInstance, {
+        retries: 3,
+        retryDelay: axiosRetry.exponentialDelay,
+        retryCondition: (error) =>
+          RETRYABLE_NETWORK_ERROR_CODES.some(
+            (code) =>
+              (error as any).code === code || error.message?.includes(code) || (error as any).cause?.code === code,
+          ),
+      })
+    }
   }
 
   async healthCheck(_signal?: AbortSignal): Promise<void> {
@@ -233,5 +264,50 @@ export class RunnerAdapterV2 implements RunnerAdapter {
     })
 
     this.logger.debug(`Created RESIZE_BOX job for box ${boxId} on runner ${this.runner.id}`)
+  }
+
+  async enableSSHAccess(sandboxId: string, unixUser: string): Promise<void> {
+    if (!this.axiosInstance) {
+      throw new Error(`enableSSHAccess: runner ${this.runner.id} has no apiUrl set`)
+    }
+    // validateStatus: false causes axios to resolve (not throw) for all HTTP
+    // status codes so we can inspect the status before deciding how to surface it.
+    const response = await this.axiosInstance.post(`/v1/boxes/${sandboxId}/ssh-access`, { unix_user: unixUser }, {
+      validateStatus: () => true,
+    })
+    if (response.status === 503) {
+      throw new Error(
+        `Runner SSH gateway not configured: deploy SSH_GATEWAY_PUBLIC_KEY to enable real-SSH access on this runner`,
+      )
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(
+        `enableSSHAccess failed for sandbox ${sandboxId} on runner ${this.runner.id}: HTTP ${response.status}`,
+      )
+    }
+  }
+
+  async disableSSHAccess(sandboxId: string): Promise<void> {
+    if (!this.axiosInstance) {
+      throw new Error(`disableSSHAccess: runner ${this.runner.id} has no apiUrl set`)
+    }
+    // validateStatus: false causes axios to resolve (not throw) for all HTTP
+    // status codes so we can handle 404 and 503 explicitly without catching.
+    const response = await this.axiosInstance.delete(`/v1/boxes/${sandboxId}/ssh-access`, {
+      validateStatus: () => true,
+    })
+    if (response.status === 404) {
+      // SSH was never enabled on this runner — nothing to disable; treat as no-op.
+      return
+    }
+    // 503 means the runner's SSH port allocator is not configured. This is a
+    // configuration error, not proof that SSH was never enabled. Returning
+    // silently here would leave runner-side port/state alive with no DB token.
+    // Surface it as an error so callers can log and decide on best-effort handling.
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(
+        `disableSSHAccess failed for sandbox ${sandboxId} on runner ${this.runner.id}: HTTP ${response.status}`,
+      )
+    }
   }
 }

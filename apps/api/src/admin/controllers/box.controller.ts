@@ -47,7 +47,7 @@ export class AdminBoxController {
   @Audit({
     action: AuditAction.RECOVER,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxId,
+    targetIdFromRequest: (req) => req.params.boxId as string,
     targetIdFromResult: (result: BoxDto) => result?.id,
   })
   async recoverBox(@Param('boxId') boxId: string): Promise<BoxDto> {

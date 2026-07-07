@@ -899,6 +899,18 @@ impl EmbeddedManifest {
             &profile,
             Self::find_prebuilt_guest,
         );
+        self.copy_prebuilt_binary(
+            workspace_root,
+            "boxlite-sshd",
+            &profile,
+            Self::find_prebuilt_sshd,
+        );
+        self.copy_prebuilt_binary(
+            workspace_root,
+            "boxlite-ssh-keygen",
+            &profile,
+            Self::find_prebuilt_ssh_keygen,
+        );
 
         let entries = self.scan_entries();
         Self::emit_manifest(&manifest_path, &entries);
@@ -1004,6 +1016,26 @@ impl EmbeddedManifest {
         }
 
         None
+    }
+
+    /// Find pre-built boxlite-sshd binary.
+    ///
+    /// Static sshd is built externally by CI (Alpine Docker, musl static link)
+    /// and placed in `dist/` at the workspace root. Not present in local dev
+    /// builds; `copy_prebuilt_binary` warns and skips when not found.
+    fn find_prebuilt_sshd(workspace_root: &Path, _profile: &str) -> Option<PathBuf> {
+        let path = workspace_root.join("dist").join("boxlite-sshd");
+        if path.is_file() { Some(path) } else { None }
+    }
+
+    /// Find pre-built boxlite-ssh-keygen binary.
+    ///
+    /// Built alongside boxlite-sshd by CI and placed in `dist/` at the
+    /// workspace root. Not present in local dev builds; `copy_prebuilt_binary`
+    /// warns and skips when not found.
+    fn find_prebuilt_ssh_keygen(workspace_root: &Path, _profile: &str) -> Option<PathBuf> {
+        let path = workspace_root.join("dist").join("boxlite-ssh-keygen");
+        if path.is_file() { Some(path) } else { None }
     }
 
     /// Return architecture list with the build target's arch first.

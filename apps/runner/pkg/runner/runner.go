@@ -14,6 +14,7 @@ import (
 	blclient "github.com/boxlite-ai/runner/pkg/boxlite"
 	"github.com/boxlite-ai/runner/pkg/models"
 	"github.com/boxlite-ai/runner/pkg/services"
+	"github.com/boxlite-ai/runner/pkg/sshport"
 )
 
 type RunnerInstanceConfig struct {
@@ -21,6 +22,7 @@ type RunnerInstanceConfig struct {
 	Boxlite          *blclient.Client
 	MetricsCollector *metrics.Collector
 	BoxService       *services.BoxService
+	SSHPortAllocator *sshport.Allocator
 }
 
 type Runner struct {
@@ -28,6 +30,7 @@ type Runner struct {
 	Boxlite          *blclient.Client
 	MetricsCollector *metrics.Collector
 	BoxService       *services.BoxService
+	SSHPortAllocator *sshport.Allocator
 }
 
 var runner *Runner
@@ -52,6 +55,7 @@ func GetInstance(config *RunnerInstanceConfig) (*Runner, error) {
 			Boxlite:          config.Boxlite,
 			BoxService:       config.BoxService,
 			MetricsCollector: config.MetricsCollector,
+			SSHPortAllocator: config.SSHPortAllocator,
 		}
 	}
 

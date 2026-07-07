@@ -58,6 +58,17 @@ type ExecutionOptions struct {
 	Stderr   io.Writer
 	OnStdout func([]byte)
 	OnStderr func([]byte)
+	// OnExit is called after the last stdout/stderr byte has been delivered
+	// and before any further writes to Stdout/Stderr can occur. The argument
+	// is the process exit code (or EXIT_CODE_FORCE_CLOSED=-129 when the
+	// execution handle was freed before the process exited naturally).
+	//
+	// Callers that need a drain guarantee — i.e. they must not close the
+	// Stdout/Stderr writers until all output has arrived — should use OnExit
+	// as the signal: the Rust exit_pump awaits every stream pump's done-rx
+	// before pushing the Exit event, so by the time OnExit fires, all
+	// stdout/stderr callbacks for this execution have completed.
+	OnExit func(int)
 	// Env is the environment given to the executed process. nil/empty
 	// inherits the container default. The map is serialised into a flat
 	// [k0, v0, k1, v1, ...] C array in deterministic key order.
@@ -69,6 +80,11 @@ type ExecutionOptions struct {
 	// means no timeout (the C side treats `timeout_secs <= 0` as
 	// unbounded — see `sdks/c/src/exec/command.rs`).
 	Timeout time.Duration
+	// User is the OS user the process runs as inside the guest, in the
+	// form accepted by BoxliteCommand.user (e.g., "boxlite", "1000:1000").
+	// Empty string inherits the container image default (typically root).
+	// Maps directly to BoxliteCommand.user in the C ABI.
+	User string
 }
 
 // executionStreamState holds the user-provided sinks for streaming output
@@ -90,6 +106,7 @@ type executionStreamState struct {
 	stderr   io.Writer
 	onStdout func([]byte)
 	onStderr func([]byte)
+	onExit   func(int)
 
 	released atomic.Bool
 
@@ -112,6 +129,7 @@ func newExecutionStreamState(opts ExecutionOptions) *executionStreamState {
 		onStdout: opts.OnStdout,
 		onStderr: opts.OnStderr,
 		drained:  make(chan struct{}),
+		onExit:   opts.OnExit,
 	}
 }
 
@@ -147,9 +165,15 @@ func (s *executionStreamState) deliverStderr(data []byte) {
 	}
 }
 
-func (s *executionStreamState) deliverExit(_ int) {
+func (s *executionStreamState) deliverExit(exitCode int) {
 	s.released.Store(true)
 	close(s.drained)
+	s.mu.Lock()
+	cb := s.onExit
+	s.mu.Unlock()
+	if cb != nil {
+		cb(exitCode)
+	}
 }
 
 func (s *executionStreamState) markReleased() {
@@ -230,6 +254,12 @@ func (b *Box) StartExecution(_ context.Context, name string, args []string, opts
 		defer C.free(unsafe.Pointer(cWorkdir))
 	}
 
+	var cUser *C.char
+	if cfg.User != "" {
+		cUser = toCString(cfg.User)
+		defer C.free(unsafe.Pointer(cUser))
+	}
+
 	cCommand := C.BoxliteCommand{
 		command:      cCmd,
 		args:         cArgs,
@@ -237,7 +267,7 @@ func (b *Box) StartExecution(_ context.Context, name string, args []string, opts
 		env_pairs:    envPairs,
 		env_count:    C.int(envCount),
 		workdir:      cWorkdir,
-		user:         nil,
+		user:         cUser,
 		timeout_secs: C.double(cfg.Timeout.Seconds()),
 		tty:          boolToCInt(cfg.TTY),
 	}

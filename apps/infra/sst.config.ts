@@ -717,6 +717,7 @@ export default $config({
         API_KEY: envOr('SSH_GATEWAY_API_KEY', sshGatewayApiKey.result), // NB: not SSH_GATEWAY_API_KEY
         SSH_PRIVATE_KEY: sshPrivateKey.value,
         SSH_HOST_KEY: sshHostKey.value,
+        RUNNER_API_TOKEN: envOr('RUNNER_API_TOKEN', defaultRunnerApiKey.result),
       },
     })
 
@@ -856,6 +857,14 @@ export default $config({
           cidrBlocks: [vpc.nodes.vpc.cidrBlock],
           description: 'control-plane API + box proxy + ssh-gateway (multiplexed on the runner API port)',
         },
+        {
+          protocol: 'tcp',
+          fromPort: 22100,
+          toPort: 22199,
+          securityGroups: vpc.securityGroups,
+          description:
+            'VM SSH port range 22100-22199 for real-SSH sessions — restricted to the VPC-managed SG shared by cluster ECS tasks (SshGateway), not the whole VPC CIDR',
+        },
       ],
       egress: [
         {
@@ -900,13 +909,20 @@ export default $config({
       })
     }
 
+    // Derived once (as an Output, since sst.Secret values are only available
+    // inside apply()) and reused at every runner user-data call site below, so
+    // the default runner and every extra runner get the identical gateway
+    // public key and ssh-keygen only runs once per deploy.
+    const gatewayPublicKey = sshPrivateKey.value.apply((privB64) => deriveGatewayPublicKey(privB64))
+
     const runnerUserData = $resolve([
       api.url,
       defaultRunnerApiKey.result,
       otelCollectorOtlpHttpUrl,
       ghcrSecret ? ghcrSecret.arn : '',
-    ]).apply(([apiUrl, token, otelEndpoint, ghcrSecretArn]) =>
-      buildRunnerUserData({ apiUrl, token, otelEndpoint, ghcrSecretArn: ghcrSecretArn || undefined, ghcrUsername }),
+      gatewayPublicKey,
+    ]).apply(([apiUrl, token, otelEndpoint, ghcrSecretArn, sshGatewayPublicKey]) =>
+      buildRunnerUserData({ apiUrl, token, otelEndpoint, ghcrSecretArn: ghcrSecretArn || undefined, ghcrUsername, sshGatewayPublicKey }),
     )
 
     // Runners hold load-bearing box state (/var/lib/boxlite + in-memory libkrun VMs).
@@ -975,9 +991,14 @@ export default $config({
       const instance = makeRunner(
         `Runner-${name}`,
         `boxlite-runner-${index}`,
-        $resolve([api.url, apiKey.result, otelCollectorOtlpHttpUrl, ghcrSecret ? ghcrSecret.arn : '']).apply(
-          ([apiUrl, token, otelEndpoint, ghcrSecretArn]) =>
-            buildRunnerUserData({ apiUrl, token, otelEndpoint, ghcrSecretArn: ghcrSecretArn || undefined, ghcrUsername }),
+        $resolve([
+          api.url,
+          apiKey.result,
+          otelCollectorOtlpHttpUrl,
+          ghcrSecret ? ghcrSecret.arn : '',
+          gatewayPublicKey,
+        ]).apply(([apiUrl, token, otelEndpoint, ghcrSecretArn, sshGatewayPublicKey]) =>
+          buildRunnerUserData({ apiUrl, token, otelEndpoint, ghcrSecretArn: ghcrSecretArn || undefined, ghcrUsername, sshGatewayPublicKey }),
         ),
       )
       return { name, apiKey, instance }
@@ -1012,12 +1033,39 @@ export default $config({
 // ── runner bootstrap ─────────────────────────────────────────────────────────
 // EC2 user-data: downloads prebuilt runner binary from GitHub Releases
 // and runs it directly with BoxLite VM isolation.
+
+// Derive the SSH gateway public key from the private key if not provided explicitly,
+// so operators only need to supply SSH_PRIVATE_KEY_B64 (which they already have).
+// Takes the secret value as a parameter rather than reading
+// process.env.SSH_PRIVATE_KEY_B64 directly: sst.Secret values are kept out of
+// process.env inside sst.config.ts, so reading the env var here would always
+// miss the secret-managed value and silently derive an empty key.
+function deriveGatewayPublicKey(privB64: string | undefined): string {
+  const explicit = process.env.SSH_GATEWAY_PUBLIC_KEY;
+  if (explicit) return explicit;
+  if (!privB64) return "";
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { execSync } = require("child_process") as typeof import("child_process");
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { writeFileSync, unlinkSync } = require("fs") as typeof import("fs");
+  const tmp = `/tmp/sst-ssh-gw-${process.pid}`;
+  try {
+    writeFileSync(tmp, Buffer.from(privB64, "base64").toString("utf8"), { mode: 0o600 });
+    return execSync(`ssh-keygen -y -f ${tmp}`, { encoding: "utf8" }).trim();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`SSH_GATEWAY_PUBLIC_KEY cannot be derived from SSH_PRIVATE_KEY_B64: ${reason}`);
+  } finally {
+    try { unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+  }
+}
 async function buildRunnerUserData(input: {
   apiUrl: string
   token: string
   otelEndpoint: string
   ghcrSecretArn?: string
   ghcrUsername?: string
+  sshGatewayPublicKey: string
 }): Promise<string> {
   const { readFileSync } = await import('fs')
   const { resolve } = await import('path')
@@ -1129,6 +1177,7 @@ RestartSec=5
 TimeoutStopSec=60
 Environment=BOXLITE_API_URL=${input.apiUrl.replace(/\/$/, '')}/api
 Environment=BOXLITE_RUNNER_TOKEN=${input.token}
+Environment=SSH_GATEWAY_PUBLIC_KEY="${input.sshGatewayPublicKey}"
 Environment=API_VERSION=2
 Environment=API_PORT=${PORTS.RUNNER}
 Environment=RUNNER_DOMAIN=\$HOST_IP

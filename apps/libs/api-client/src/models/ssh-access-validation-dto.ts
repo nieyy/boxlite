@@ -23,5 +23,9 @@ export interface SshAccessValidationDto {
      * ID of the box this SSH access is for
      */
     'boxId': string;
+    /**
+     * Unix user for real-SSH access; null for legacy exec-bridge tokens
+     */
+    'unixUser'?: string | null;
 }
 

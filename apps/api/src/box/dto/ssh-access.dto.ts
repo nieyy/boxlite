@@ -4,8 +4,26 @@
  * SPDX-License-Identifier: AGPL-3.0
  */
 
-import { ApiProperty } from '@nestjs/swagger'
+import { ApiHideProperty, ApiProperty } from '@nestjs/swagger'
+import { Transform } from 'class-transformer'
+import { IsOptional, Matches } from 'class-validator'
 import { SshAccess } from '../entities/ssh-access.entity'
+
+// POSIX portable username charset (matches useradd/adduser's NAME_REGEX):
+// lowercase letter or underscore, then up to 31 lowercase letters, digits,
+// underscores, or hyphens. Also matches the empty string, since the
+// controller treats an empty/whitespace-only unixUser as "absent" and falls
+// back to a legacy exec-bridge token (see createSshAccess below) — validation
+// must not reject that case.
+//
+// unixUser is interpolated unquoted into guest-side /etc/passwd,
+// /etc/sudoers.d/$UNIX_USER, and the sshd AllowUsers config by
+// boxlite-enable-ssh, so rejecting anything outside this charset here (rather
+// than relying on the guest script) stops a crafted value — e.g. containing
+// ':', '/', or a newline — from corrupting those files or injecting extra
+// sshd config directives.
+const UNIX_USERNAME_PATTERN = /^([a-z_][a-z0-9_-]{0,31})?$/
+const trimIfString = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value)
 
 export class SshAccessDto {
   @ApiProperty({
@@ -102,12 +120,51 @@ export class SshAccessValidationDto {
   })
   boxId: string
 
-  static fromValidationResult(valid: boolean, boxId: string): SshAccessValidationDto {
+  @ApiProperty({
+    description: 'Unix user for real-SSH access; null for legacy exec-bridge tokens',
+    example: 'boxlite',
+    nullable: true,
+    required: false,
+  })
+  unixUser?: string | null
+
+  static fromValidationResult(valid: boolean, boxId: string, unixUser?: string | null): SshAccessValidationDto {
     const dto = new SshAccessValidationDto()
     dto.valid = valid
     dto.boxId = boxId
+    dto.unixUser = unixUser ?? null
     return dto
   }
+}
+
+// Request body for creating SSH access. Accepts both snake_case (unix_user) and
+// camelCase (unixUser) field names so callers using either naming convention work.
+// The controller resolves via: body?.unixUser ?? body?.unix_user
+//
+// unix_user is hidden from the OpenAPI schema (ApiHideProperty) rather than
+// documented alongside unixUser: both camelCase and snake_case forms PascalCase
+// to the same Go identifier (UnixUser), and generating both produces a duplicate
+// field declaration that fails to compile in apps/api-client-go. The runtime
+// fallback below still accepts unix_user from the raw request body regardless
+// of what's in the generated schema.
+export class CreateSshAccessBodyDto {
+  @ApiProperty({
+    description: 'Unix user for SSH access (camelCase form)',
+    example: 'boxlite',
+    required: false,
+    pattern: UNIX_USERNAME_PATTERN.source,
+  })
+  @IsOptional()
+  @Transform(trimIfString)
+  @Matches(UNIX_USERNAME_PATTERN, { message: 'unixUser must be a valid POSIX username' })
+  unixUser?: string
+
+  @ApiHideProperty()
+  @IsOptional()
+  @Transform(trimIfString)
+  @Matches(UNIX_USERNAME_PATTERN, { message: 'unix_user must be a valid POSIX username' })
+  // eslint-disable-next-line @typescript-eslint/naming-convention
+  unix_user?: string
 }
 
 export class RevokeSshAccessDto {

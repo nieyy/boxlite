@@ -62,11 +62,21 @@ type Config struct {
 	GhcrToken                          string        `envconfig:"GHCR_TOKEN"`
 	DockerHubUsername                  string        `envconfig:"DOCKERHUB_USERNAME"`
 	DockerHubToken                     string        `envconfig:"DOCKERHUB_TOKEN"`
+	// SSH access configuration
+	SSHGatewayPublicKey string `envconfig:"SSH_GATEWAY_PUBLIC_KEY"`
+	SSHPortBase         int    `envconfig:"SSH_PORT_BASE" default:"22100" validate:"min=1,max=65535"`
+	SSHPortPoolSize     int    `envconfig:"SSH_PORT_POOL_SIZE" default:"100" validate:"min=1"`
 }
 
 var DEFAULT_API_PORT int = 8080
 
 var config *Config
+
+// ResetForTest clears the cached config singleton so that tests can set
+// environment variables and call GetConfig again with a clean slate.
+func ResetForTest() {
+	config = nil
+}
 
 func GetConfig() (*Config, error) {
 	if config != nil {
@@ -84,6 +94,13 @@ func GetConfig() (*Config, error) {
 	err = validate.Struct(config)
 	if err != nil {
 		return nil, err
+	}
+
+	if config.SSHPortBase+config.SSHPortPoolSize-1 > 65535 {
+		return nil, fmt.Errorf(
+			"invalid SSH port range: SSH_PORT_BASE=%d + SSH_PORT_POOL_SIZE=%d exceeds the maximum port 65535",
+			config.SSHPortBase, config.SSHPortPoolSize,
+		)
 	}
 
 	if config.BoxliteApiUrl == "" {

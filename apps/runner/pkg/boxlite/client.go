@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -19,16 +21,40 @@ import (
 	"github.com/boxlite-ai/runner/pkg/api/dto"
 	"github.com/boxlite-ai/runner/pkg/models/enums"
 	"go.opentelemetry.io/otel/propagation"
+
+	"github.com/boxlite-ai/runner/pkg/sshport"
 )
 
 // Client wraps the BoxLite Go SDK to provide the same interface as the Docker client.
 // It manages VMs instead of containers, providing hardware-level isolation.
 type Client struct {
-	runtime            *boxlite.Runtime
-	logger             *slog.Logger
-	homeDir            string
-	mu                 sync.RWMutex
-	boxes              map[string]*boxlite.Box
+	runtime *boxlite.Runtime
+	logger  *slog.Logger
+	// homeDir is the BoxLite home directory (absolute path). Stored here so that
+	// SSH helpers (gvproxyAdminSocket, sshStatePath) can compute per-box paths
+	// without re-resolving the home directory on each call.
+	homeDir string
+	mu      sync.RWMutex
+	boxes   map[string]*boxlite.Box
+	// sshStates holds runtime SSH access state for each box that has (or had)
+	// SSH enabled. Guarded by mu. Populated by EnableSSHAccess; cleared by
+	// DisableSSHAccess and cleanupSSHOnDestroy.
+	sshStates map[string]*SSHState
+	// sshBoxes holds the sshCapable handle for each box that has (or had)
+	// SSH enabled. Populated by EnableSSHAccess; cleared by disable/destroy.
+	// Tests may pre-populate this map with stubs to avoid a real VM runtime.
+	sshBoxes map[string]sshCapable
+	// sshBoxFetcher is an optional hook used by tests to inject a fake sshCapable
+	// without requiring a real BoxLite runtime. When nil (production), resolveSSHBox
+	// falls back to getOrFetchBox. Tests set this field to control box resolution.
+	sshBoxFetcher func(ctx context.Context, boxId string) (sshCapable, error)
+	// sshAlloc is the port allocator shared with the SSH controller.
+	// Stored here so Destroy can release the port without changing its signature.
+	sshAlloc *sshport.Allocator
+	// boxSSHMu serialises concurrent Enable/Disable calls per box so that
+	// two simultaneous POST /ssh-access requests cannot double-allocate a port.
+	boxSSHMuMu         sync.Mutex
+	boxSSHMu           map[string]*sync.Mutex
 	awsRegion          string
 	awsEndpointUrl     string
 	awsAccessKeyId     string
@@ -56,6 +82,30 @@ type ClientConfig struct {
 	VolumeCleanupInterval        time.Duration
 	VolumeCleanupDryRun          bool
 	VolumeCleanupExclusionPeriod time.Duration
+	// SSHPortAllocator is the allocator used by the SSH controller. When set,
+	// Destroy automatically releases the SSH port so the pool is not exhausted
+	// by repeated enable+destroy cycles without an explicit Disable.
+	SSHPortAllocator *sshport.Allocator
+}
+
+// resolveBoxliteHomeDir returns an absolute BoxLite home directory path.
+//
+// When dir is non-empty it is returned unchanged (caller's explicit choice).
+// Otherwise the function mirrors the Rust runtime's default_home_dir logic:
+// use $BOXLITE_HOME if set, else $HOME/.boxlite.
+// An empty return value is only possible if $HOME is also unset.
+func resolveBoxliteHomeDir(dir string) string {
+	if dir != "" {
+		return dir
+	}
+	if env := os.Getenv("BOXLITE_HOME"); env != "" {
+		return env
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".boxlite")
 }
 
 func networkSpec(blockAll *bool, allowList *string) boxlite.NetworkSpec {
@@ -135,9 +185,10 @@ func buildImageRegistries(insecureRegistries []string, ghcrUsername, ghcrToken s
 
 // NewClient creates a new BoxLite client backed by the BoxLite VM runtime.
 func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
+	resolvedHomeDir := resolveBoxliteHomeDir(config.HomeDir)
 	var opts []boxlite.RuntimeOption
-	if config.HomeDir != "" {
-		opts = append(opts, boxlite.WithHomeDir(config.HomeDir))
+	if resolvedHomeDir != "" {
+		opts = append(opts, boxlite.WithHomeDir(resolvedHomeDir))
 	}
 	insecureRegistries := normalizeRegistryHosts(config.InsecureRegistries)
 	registries := buildImageRegistries(insecureRegistries, config.GhcrUsername, config.GhcrToken)
@@ -168,11 +219,15 @@ func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
 		logger = slog.Default()
 	}
 
-	return &Client{
+	c := &Client{
 		runtime:            rt,
 		logger:             logger,
-		homeDir:            config.HomeDir,
+		homeDir:            resolvedHomeDir,
 		boxes:              make(map[string]*boxlite.Box),
+		sshStates:          make(map[string]*SSHState),
+		sshBoxes:           make(map[string]sshCapable),
+		boxSSHMu:           make(map[string]*sync.Mutex),
+		sshAlloc:           config.SSHPortAllocator,
 		awsRegion:          config.AWSRegion,
 		awsEndpointUrl:     config.AWSEndpointUrl,
 		awsAccessKeyId:     config.AWSAccessKeyId,
@@ -183,7 +238,15 @@ func NewClient(ctx context.Context, config ClientConfig) (*Client, error) {
 			dryRun:          config.VolumeCleanupDryRun,
 			exclusionPeriod: config.VolumeCleanupExclusionPeriod,
 		},
-	}, nil
+	}
+
+	// Recover SSH state from disk so a runner restart does not lose track of
+	// ports that are still allocated in gvproxy. Must be called after c is
+	// fully initialised so reconcileSSHState can populate c.sshStates and the
+	// allocator can reserve the ports.
+	c.reconcileSSHState(config.SSHPortAllocator)
+
+	return c, nil
 }
 
 // Shutdown gracefully stops all running boxes in the underlying BoxLite
@@ -321,6 +384,16 @@ func (c *Client) Start(ctx context.Context, boxId string, authToken *string, met
 	if err := bx.Start(ctx); err != nil {
 		return "", err
 	}
+
+	// Re-add the gvproxy port forward for any SSH-enabled box after restart.
+	// The gvproxy instance is recreated on box start, so the port forward rules
+	// must be re-applied. ForwardHealthy is set to false on failure so that a
+	// subsequent idempotent enable_ssh call detects and re-applies the forward.
+	if err := c.ReapplySSHPortForward(ctx, boxId); err != nil {
+		c.logger.WarnContext(ctx, "failed to reapply SSH port forward after start; SSH port forward will be unavailable until next enable_ssh call",
+			"box", boxId, "error", err)
+	}
+
 	return "boxlite", nil
 }
 
@@ -351,6 +424,10 @@ func (c *Client) Destroy(ctx context.Context, boxId string) error {
 	if err := c.runtime.ForceRemove(ctx, boxId); err != nil {
 		return err
 	}
+
+	// Release any SSH port held by this box. The VM is now gone so only
+	// host-side cleanup is needed (no guest RPC). alloc may be nil (no-op).
+	c.cleanupSSHOnDestroy(ctx, boxId, c.sshAlloc)
 
 	if err := c.removeBoxVolumeMountRecord(ctx, boxId); err != nil {
 		c.logger.WarnContext(ctx, "failed to remove box volume mount record", "box", boxId, "error", err)
@@ -388,7 +465,14 @@ func (c *Client) GetBoxState(ctx context.Context, boxId string) (enums.BoxState,
 }
 
 // StartExecution starts an interactive execution in a box.
-func (c *Client) StartExecution(ctx context.Context, boxId string, command string, args []string, stdout, stderr io.Writer, tty bool) (*boxlite.Execution, error) {
+// env is merged into the process environment; nil or empty inherits the
+// container default (same semantics as ExecutionOptions.Env in the SDK).
+// user is the OS user inside the guest (e.g., "boxlite"); empty inherits the
+// container image default.
+// onExit, if non-nil, is called after the last stdout/stderr byte for this
+// execution has been delivered — callers that must not close stdout/stderr
+// writers until all output is drained should use this as their drain signal.
+func (c *Client) StartExecution(ctx context.Context, boxId string, command string, args []string, stdout, stderr io.Writer, tty bool, env map[string]string, user string, onExit func(int)) (*boxlite.Execution, error) {
 	bx, err := c.getOrFetchBox(ctx, boxId)
 	if err != nil {
 		return nil, err
@@ -397,6 +481,9 @@ func (c *Client) StartExecution(ctx context.Context, boxId string, command strin
 		TTY:    tty,
 		Stdout: stdout,
 		Stderr: stderr,
+		Env:    env,
+		User:   user,
+		OnExit: onExit,
 	})
 }
 

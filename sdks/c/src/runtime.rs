@@ -30,6 +30,11 @@ pub struct RuntimeHandle {
     pub tokio_rt: Arc<TokioRuntime>,
     pub liveness: Arc<RuntimeLiveness>,
     pub queue: Arc<EventQueue>,
+    /// Home directory for this runtime instance.
+    /// Used to construct per-box filesystem paths (e.g. gvproxy admin socket)
+    /// in box handles without re-deriving them from the backend.
+    /// Empty for REST-backed runtimes (no local filesystem).
+    pub home_dir: std::path::PathBuf,
 }
 
 /// Shared runtime liveness for FFI-owned handles.
@@ -209,6 +214,8 @@ unsafe fn runtime_new(
         // Executable-owned logging init (the library no longer auto-installs a subscriber).
         let _ = boxlite::init_logging_for(&options.home_dir);
 
+        // Clone home_dir before options is consumed by BoxliteRuntime::new.
+        let home_dir = options.home_dir.clone();
         let runtime = match BoxliteRuntime::new(options) {
             Ok(rt) => rt,
             Err(e) => {
@@ -223,6 +230,7 @@ unsafe fn runtime_new(
             tokio_rt,
             liveness: Arc::new(RuntimeLiveness::new()),
             queue: Arc::new(EventQueue::new()),
+            home_dir,
         }));
         BoxliteErrorCode::Ok
     }

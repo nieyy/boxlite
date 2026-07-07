@@ -343,6 +343,7 @@ type BoxAPICreateSshAccessRequest struct {
 	boxIdOrName string
 	xBoxLiteOrganizationID *string
 	expiresInMinutes *float32
+	createSshAccessBodyDto *CreateSshAccessBodyDto
 }
 
 // Use with JWT to specify the organization ID
@@ -354,6 +355,11 @@ func (r BoxAPICreateSshAccessRequest) XBoxLiteOrganizationID(xBoxLiteOrganizatio
 // Expiration time in minutes (default: 60)
 func (r BoxAPICreateSshAccessRequest) ExpiresInMinutes(expiresInMinutes float32) BoxAPICreateSshAccessRequest {
 	r.expiresInMinutes = &expiresInMinutes
+	return r
+}
+
+func (r BoxAPICreateSshAccessRequest) CreateSshAccessBodyDto(createSshAccessBodyDto CreateSshAccessBodyDto) BoxAPICreateSshAccessRequest {
+	r.createSshAccessBodyDto = &createSshAccessBodyDto
 	return r
 }
 
@@ -402,7 +408,7 @@ func (a *BoxAPIService) CreateSshAccessExecute(r BoxAPICreateSshAccessRequest) (
 		parameterAddToHeaderOrQuery(localVarQueryParams, "expiresInMinutes", r.expiresInMinutes, "form", "")
 	}
 	// to determine the Content-Type header
-	localVarHTTPContentTypes := []string{}
+	localVarHTTPContentTypes := []string{"application/json"}
 
 	// set Content-Type header
 	localVarHTTPContentType := selectHeaderContentType(localVarHTTPContentTypes)
@@ -421,6 +427,8 @@ func (a *BoxAPIService) CreateSshAccessExecute(r BoxAPICreateSshAccessRequest) (
 	if r.xBoxLiteOrganizationID != nil {
 		parameterAddToHeaderOrQuery(localVarHeaderParams, "X-BoxLite-Organization-ID", r.xBoxLiteOrganizationID, "simple", "")
 	}
+	// body params
+	localVarPostBody = r.createSshAccessBodyDto
 	req, err := a.client.prepareRequest(r.ctx, localVarPath, localVarHTTPMethod, localVarPostBody, localVarHeaderParams, localVarQueryParams, localVarFormParams, formFiles)
 	if err != nil {
 		return localVarReturnValue, nil, err

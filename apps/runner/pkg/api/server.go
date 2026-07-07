@@ -158,6 +158,10 @@ func (a *ApiServer) Start(ctx context.Context) error {
 		boxliteApi.PUT("/:boxId/files", controllers.BoxliteFileUpload)
 		boxliteApi.GET("/:boxId/files", controllers.BoxliteFileDownload)
 		boxliteApi.GET("/:boxId/metrics", controllers.BoxliteMetrics)
+		// SSH access — enable/query/disable real-SSH access via gvproxy port forward
+		boxliteApi.POST("/:boxId/ssh-access", controllers.EnableSSHAccess)
+		boxliteApi.GET("/:boxId/ssh-access", controllers.GetSSHAccess)
+		boxliteApi.DELETE("/:boxId/ssh-access", controllers.DisableSSHAccess)
 	}
 
 	a.httpServer = &http.Server{

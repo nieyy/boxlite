@@ -142,7 +142,7 @@ export class ApiKeyController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.API_KEY,
-    targetIdFromRequest: (req) => req.params.name,
+    targetIdFromRequest: (req) => req.params.name as string,
   })
   async deleteApiKey(@AuthContext() authContext: OrganizationAuthContext, @Param('name') name: string) {
     await this.apiKeyService.deleteApiKey(authContext.organizationId, authContext.userId, name)
@@ -158,7 +158,7 @@ export class ApiKeyController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.API_KEY,
-    targetIdFromRequest: (req) => req.params.name,
+    targetIdFromRequest: (req) => req.params.name as string,
     requestMetadata: {
       params: (req) => ({
         userId: req.params.userId,

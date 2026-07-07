@@ -66,6 +66,13 @@ export interface RunnerAdapter {
   recoverBox(box: Box): Promise<void>
 
   resizeBox(boxId: string, cpu?: number, memory?: number, disk?: number): Promise<void>
+
+  // enableSSHAccess configures real-SSH access (gvproxy port-forward + sshd) on
+  // the runner for the given box. unixUser is the guest account to allow.
+  enableSSHAccess(boxId: string, unixUser: string): Promise<void>
+
+  // disableSSHAccess tears down the real-SSH access previously enabled by enableSSHAccess.
+  disableSSHAccess(boxId: string): Promise<void>
 }
 
 @Injectable()

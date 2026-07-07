@@ -106,7 +106,7 @@ export class OrganizationRoleController {
   @Audit({
     action: AuditAction.UPDATE,
     targetType: AuditTarget.ORGANIZATION_ROLE,
-    targetIdFromRequest: (req) => req.params.roleId,
+    targetIdFromRequest: (req) => req.params.roleId as string,
     requestMetadata: {
       body: (req: TypedRequest<UpdateOrganizationRoleDto>) => ({
         name: req.body?.name,
@@ -146,7 +146,7 @@ export class OrganizationRoleController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.ORGANIZATION_ROLE,
-    targetIdFromRequest: (req) => req.params.roleId,
+    targetIdFromRequest: (req) => req.params.roleId as string,
   })
   async delete(@Param('organizationId') organizationId: string, @Param('roleId') roleId: string): Promise<void> {
     return this.organizationRoleService.delete(roleId)

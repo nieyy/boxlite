@@ -37,7 +37,8 @@ All URIs are relative to *http://localhost:3000*
 ```typescript
 import {
     BoxApi,
-    Configuration
+    Configuration,
+    CreateSshAccessBodyDto
 } from './api';
 
 const configuration = new Configuration();
@@ -46,11 +47,13 @@ const apiInstance = new BoxApi(configuration);
 let boxIdOrName: string; //ID or name of the box (default to undefined)
 let xBoxLiteOrganizationID: string; //Use with JWT to specify the organization ID (optional) (default to undefined)
 let expiresInMinutes: number; //Expiration time in minutes (default: 60) (optional) (default to undefined)
+let createSshAccessBodyDto: CreateSshAccessBodyDto; // (optional)
 
 const { status, data } = await apiInstance.createSshAccess(
     boxIdOrName,
     xBoxLiteOrganizationID,
-    expiresInMinutes
+    expiresInMinutes,
+    createSshAccessBodyDto
 );
 ```
 
@@ -58,6 +61,7 @@ const { status, data } = await apiInstance.createSshAccess(
 
 |Name | Type | Description  | Notes|
 |------------- | ------------- | ------------- | -------------|
+| **createSshAccessBodyDto** | **CreateSshAccessBodyDto**|  | |
 | **boxIdOrName** | [**string**] | ID or name of the box | defaults to undefined|
 | **xBoxLiteOrganizationID** | [**string**] | Use with JWT to specify the organization ID | (optional) defaults to undefined|
 | **expiresInMinutes** | [**number**] | Expiration time in minutes (default: 60) | (optional) defaults to undefined|
@@ -73,7 +77,7 @@ const { status, data } = await apiInstance.createSshAccess(
 
 ### HTTP request headers
 
- - **Content-Type**: Not defined
+ - **Content-Type**: application/json
  - **Accept**: application/json
 
 

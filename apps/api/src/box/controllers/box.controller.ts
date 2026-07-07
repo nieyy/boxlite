@@ -29,6 +29,7 @@ import {
   ApiTags,
   ApiHeader,
   ApiBearerAuth,
+  ApiBody,
 } from '@nestjs/swagger'
 import { BoxDto, BoxLabelsDto } from '../dto/box.dto'
 import { ResizeBoxDto } from '../dto/resize-box.dto'
@@ -55,7 +56,7 @@ import { Audit, TypedRequest } from '../../audit/decorators/audit.decorator'
 import { AuditAction } from '../../audit/enums/audit-action.enum'
 import { AuditTarget } from '../../audit/enums/audit-target.enum'
 // import { UpdateBoxNetworkSettingsDto } from '../dto/update-box-network-settings.dto'
-import { SshAccessDto, SshAccessValidationDto } from '../dto/ssh-access.dto'
+import { CreateSshAccessBodyDto, SshAccessDto, SshAccessValidationDto } from '../dto/ssh-access.dto'
 import { ListBoxesQueryDto } from '../dto/list-boxes-query.dto'
 import { ProxyGuard } from '../guards/proxy.guard'
 import { OrGuard } from '../../auth/or.guard'
@@ -312,7 +313,7 @@ export class BoxController {
   @Audit({
     action: AuditAction.RECOVER,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
+    targetIdFromRequest: (req) => req.params.boxIdOrName as string,
     targetIdFromResult: (result: BoxDto) => result?.id,
   })
   async recoverBox(
@@ -354,7 +355,7 @@ export class BoxController {
   @Audit({
     action: AuditAction.RESIZE,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
+    targetIdFromRequest: (req) => req.params.boxIdOrName as string,
     targetIdFromResult: (result: BoxDto) => result?.id,
     requestMetadata: {
       body: (req: TypedRequest<ResizeBoxDto>) => ({
@@ -394,7 +395,7 @@ export class BoxController {
   @Audit({
     action: AuditAction.REPLACE_LABELS,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
+    targetIdFromRequest: (req) => req.params.boxIdOrName as string,
     targetIdFromResult: (result: BoxDto) => result?.id,
     requestMetadata: {
       body: (req: TypedRequest<BoxLabelsDto>) => ({
@@ -462,7 +463,7 @@ export class BoxController {
   @Audit({
     action: AuditAction.UPDATE_PUBLIC_STATUS,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
+    targetIdFromRequest: (req) => req.params.boxIdOrName as string,
     targetIdFromResult: (result: BoxDto) => result?.id,
     requestMetadata: {
       params: (req) => ({
@@ -523,7 +524,7 @@ export class BoxController {
   @Audit({
     action: AuditAction.SET_AUTO_STOP_INTERVAL,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
+    targetIdFromRequest: (req) => req.params.boxIdOrName as string,
     targetIdFromResult: (result: BoxDto) => result?.id,
     requestMetadata: {
       params: (req) => ({
@@ -566,7 +567,7 @@ export class BoxController {
   @Audit({
     action: AuditAction.SET_AUTO_DELETE_INTERVAL,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
+    targetIdFromRequest: (req) => req.params.boxIdOrName as string,
     targetIdFromResult: (result: BoxDto) => result?.id,
     requestMetadata: {
       params: (req) => ({
@@ -743,6 +744,10 @@ export class BoxController {
     type: Number,
     description: 'Expiration time in minutes (default: 60)',
   })
+  @ApiBody({
+    type: CreateSshAccessBodyDto,
+    required: false,
+  })
   @ApiResponse({
     status: 200,
     description: 'SSH access has been created',
@@ -753,7 +758,7 @@ export class BoxController {
   @Audit({
     action: AuditAction.CREATE_SSH_ACCESS,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
+    targetIdFromRequest: (req) => req.params.boxIdOrName as string,
     targetIdFromResult: (result: SshAccessDto) => result?.boxId,
     requestMetadata: {
       query: (req) => ({
@@ -765,8 +770,10 @@ export class BoxController {
     @AuthContext() authContext: OrganizationAuthContext,
     @Param('boxIdOrName') boxIdOrName: string,
     @Query('expiresInMinutes') expiresInMinutes?: number,
+    @Body() body?: CreateSshAccessBodyDto,
   ): Promise<SshAccessDto> {
-    return await this.boxService.createSshAccess(boxIdOrName, expiresInMinutes, authContext.organizationId)
+    const unixUser = body?.unixUser?.trim() || body?.unix_user?.trim() || null
+    return await this.boxService.createSshAccess(boxIdOrName, expiresInMinutes, authContext.organizationId, [], unixUser)
   }
 
   @Delete(':boxIdOrName/ssh-access')
@@ -796,7 +803,7 @@ export class BoxController {
   @Audit({
     action: AuditAction.REVOKE_SSH_ACCESS,
     targetType: AuditTarget.BOX,
-    targetIdFromRequest: (req) => req.params.boxIdOrName,
+    targetIdFromRequest: (req) => req.params.boxIdOrName as string,
     targetIdFromResult: (result: BoxDto) => result?.id,
     requestMetadata: {
       query: (req) => ({
@@ -831,7 +838,7 @@ export class BoxController {
   })
   async validateSshAccess(@Query('token') token: string): Promise<SshAccessValidationDto> {
     const result = await this.boxService.validateSshAccess(token)
-    return SshAccessValidationDto.fromValidationResult(result.valid, result.boxId)
+    return SshAccessValidationDto.fromValidationResult(result.valid, result.boxId, result.unixUser)
   }
 
   @Get(':boxId/toolbox-proxy-url')

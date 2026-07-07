@@ -26,6 +26,8 @@ import type { Box } from '../models';
 // @ts-ignore
 import type { BoxLabels } from '../models';
 // @ts-ignore
+import type { CreateSshAccessBodyDto } from '../models';
+// @ts-ignore
 import type { MetricsResponse } from '../models';
 // @ts-ignore
 import type { PaginatedBoxes } from '../models';
@@ -60,10 +62,11 @@ export const BoxApiAxiosParamCreator = function (configuration?: Configuration) 
          * @param {string} boxIdOrName ID or name of the box
          * @param {string} [xBoxLiteOrganizationID] Use with JWT to specify the organization ID
          * @param {number} [expiresInMinutes] Expiration time in minutes (default: 60)
+         * @param {CreateSshAccessBodyDto} [createSshAccessBodyDto] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        createSshAccess: async (boxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
+        createSshAccess: async (boxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, createSshAccessBodyDto?: CreateSshAccessBodyDto, options: RawAxiosRequestConfig = {}): Promise<RequestArgs> => {
             // verify required parameter 'boxIdOrName' is not null or undefined
             assertParamExists('createSshAccess', 'boxIdOrName', boxIdOrName)
             const localVarPath = `/box/{boxIdOrName}/ssh-access`
@@ -89,6 +92,7 @@ export const BoxApiAxiosParamCreator = function (configuration?: Configuration) 
                 localVarQueryParameter['expiresInMinutes'] = expiresInMinutes;
             }
 
+            localVarHeaderParameter['Content-Type'] = 'application/json';
             localVarHeaderParameter['Accept'] = 'application/json';
 
             if (xBoxLiteOrganizationID != null) {
@@ -97,6 +101,7 @@ export const BoxApiAxiosParamCreator = function (configuration?: Configuration) 
             setSearchParams(localVarUrlObj, localVarQueryParameter);
             let headersFromBaseOptions = baseOptions && baseOptions.headers ? baseOptions.headers : {};
             localVarRequestOptions.headers = {...localVarHeaderParameter, ...headersFromBaseOptions, ...options.headers};
+            localVarRequestOptions.data = serializeDataIfNeeded(createSshAccessBodyDto, localVarRequestOptions, configuration)
 
             return {
                 url: toPathString(localVarUrlObj),
@@ -1344,11 +1349,12 @@ export const BoxApiFp = function(configuration?: Configuration) {
          * @param {string} boxIdOrName ID or name of the box
          * @param {string} [xBoxLiteOrganizationID] Use with JWT to specify the organization ID
          * @param {number} [expiresInMinutes] Expiration time in minutes (default: 60)
+         * @param {CreateSshAccessBodyDto} [createSshAccessBodyDto] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        async createSshAccess(boxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<SshAccessDto>> {
-            const localVarAxiosArgs = await localVarAxiosParamCreator.createSshAccess(boxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, options);
+        async createSshAccess(boxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, createSshAccessBodyDto?: CreateSshAccessBodyDto, options?: RawAxiosRequestConfig): Promise<(axios?: AxiosInstance, basePath?: string) => AxiosPromise<SshAccessDto>> {
+            const localVarAxiosArgs = await localVarAxiosParamCreator.createSshAccess(boxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, createSshAccessBodyDto, options);
             const localVarOperationServerIndex = configuration?.serverIndex ?? 0;
             const localVarOperationServerBasePath = operationServerMap['BoxApi.createSshAccess']?.[localVarOperationServerIndex]?.url;
             return (axios, basePath) => createRequestFunction(localVarAxiosArgs, globalAxios, BASE_PATH, configuration)(axios, localVarOperationServerBasePath || basePath);
@@ -1723,11 +1729,12 @@ export const BoxApiFactory = function (configuration?: Configuration, basePath?:
          * @param {string} boxIdOrName ID or name of the box
          * @param {string} [xBoxLiteOrganizationID] Use with JWT to specify the organization ID
          * @param {number} [expiresInMinutes] Expiration time in minutes (default: 60)
+         * @param {CreateSshAccessBodyDto} [createSshAccessBodyDto] 
          * @param {*} [options] Override http request option.
          * @throws {RequiredError}
          */
-        createSshAccess(boxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, options?: RawAxiosRequestConfig): AxiosPromise<SshAccessDto> {
-            return localVarFp.createSshAccess(boxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, options).then((request) => request(axios, basePath));
+        createSshAccess(boxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, createSshAccessBodyDto?: CreateSshAccessBodyDto, options?: RawAxiosRequestConfig): AxiosPromise<SshAccessDto> {
+            return localVarFp.createSshAccess(boxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, createSshAccessBodyDto, options).then((request) => request(axios, basePath));
         },
         /**
          * 
@@ -2031,11 +2038,12 @@ export class BoxApi extends BaseAPI {
      * @param {string} boxIdOrName ID or name of the box
      * @param {string} [xBoxLiteOrganizationID] Use with JWT to specify the organization ID
      * @param {number} [expiresInMinutes] Expiration time in minutes (default: 60)
+     * @param {CreateSshAccessBodyDto} [createSshAccessBodyDto] 
      * @param {*} [options] Override http request option.
      * @throws {RequiredError}
      */
-    public createSshAccess(boxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, options?: RawAxiosRequestConfig) {
-        return BoxApiFp(this.configuration).createSshAccess(boxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, options).then((request) => request(this.axios, this.basePath));
+    public createSshAccess(boxIdOrName: string, xBoxLiteOrganizationID?: string, expiresInMinutes?: number, createSshAccessBodyDto?: CreateSshAccessBodyDto, options?: RawAxiosRequestConfig) {
+        return BoxApiFp(this.configuration).createSshAccess(boxIdOrName, xBoxLiteOrganizationID, expiresInMinutes, createSshAccessBodyDto, options).then((request) => request(this.axios, this.basePath));
     }
 
     /**

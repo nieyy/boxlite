@@ -149,7 +149,7 @@ export class OrganizationRegionController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.REGION,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   @UseGuards(RegionAccessGuard)
   @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.DELETE_REGIONS])
@@ -178,7 +178,7 @@ export class OrganizationRegionController {
   @Audit({
     action: AuditAction.REGENERATE_PROXY_API_KEY,
     targetType: AuditTarget.REGION,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   @UseGuards(RegionAccessGuard)
   @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_REGIONS])
@@ -203,7 +203,7 @@ export class OrganizationRegionController {
   @Audit({
     action: AuditAction.UPDATE,
     targetType: AuditTarget.REGION,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
     requestMetadata: {
       body: (req: TypedRequest<UpdateRegionDto>) => ({
         ...req.body,
@@ -237,7 +237,7 @@ export class OrganizationRegionController {
   @Audit({
     action: AuditAction.REGENERATE_SSH_GATEWAY_API_KEY,
     targetType: AuditTarget.REGION,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   @UseGuards(RegionAccessGuard)
   @RequiredOrganizationResourcePermissions([OrganizationResourcePermission.WRITE_REGIONS])

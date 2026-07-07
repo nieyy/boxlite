@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: AGPL-3.0
  */
 
-import axios, { AxiosError } from 'axios'
+import axios, { AxiosError, AxiosInstance } from 'axios'
 import axiosDebug from 'axios-debug-log'
 import axiosRetry from 'axios-retry'
 
@@ -122,6 +122,7 @@ export class RunnerAdapterV0 implements RunnerAdapter {
   private readonly logger = new Logger(RunnerAdapterV0.name)
   private boxApiClient: BoxApi
   private runnerApiClient: DefaultApi
+  private axiosInstance: AxiosInstance
 
   private convertBoxState(state: EnumsBoxState): BoxState {
     switch (state) {
@@ -221,6 +222,7 @@ export class RunnerAdapterV0 implements RunnerAdapter {
       axiosDebug.addLogger(axiosInstance)
     }
 
+    this.axiosInstance = axiosInstance
     this.boxApiClient = new BoxApi(new Configuration(), '', axiosInstance)
     this.runnerApiClient = new DefaultApi(new Configuration(), '', axiosInstance)
   }
@@ -337,5 +339,13 @@ export class RunnerAdapterV0 implements RunnerAdapter {
 
   async resizeBox(boxId: string, cpu?: number, memory?: number, disk?: number): Promise<void> {
     await this.boxApiClient.resize(boxId, { cpu, memory, disk })
+  }
+
+  async enableSSHAccess(boxId: string, unixUser: string): Promise<void> {
+    await this.axiosInstance.post(`/v1/boxes/${boxId}/ssh-access`, { unix_user: unixUser })
+  }
+
+  async disableSSHAccess(boxId: string): Promise<void> {
+    await this.axiosInstance.delete(`/v1/boxes/${boxId}/ssh-access`)
   }
 }

@@ -863,6 +863,99 @@ paths:
           $ref: "#/components/responses/NotFoundError"
 
   # -------------------------------------------------------------------------
+  # SSH Access
+  # -------------------------------------------------------------------------
+  /{prefix}/boxes/{box_id}/ssh-access:
+    parameters:
+      - $ref: "#/components/parameters/prefix"
+      - $ref: "#/components/parameters/boxId"
+
+    post:
+      operationId: createSshAccess
+      summary: Create SSH access for a box
+      description: |
+        Creates an SSH access token for the specified box. Returns connection
+        details including the token and a ready-to-use `ssh` command.
+
+        The token is valid until `expires_at`. Pass it as the SSH username
+        (or via the command in `ssh_command`) to connect through the SSH gateway.
+      tags: [SSH]
+      parameters:
+        - name: expiresInMinutes
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Token lifetime in minutes. Defaults to server-configured value if omitted.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSshAccessRequest"
+      responses:
+        "200":
+          description: SSH access created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SshAccess"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+
+    delete:
+      operationId: revokeSshAccess
+      summary: Revoke SSH access for a box
+      description: |
+        Revokes an SSH access token. If `token` is omitted, all active SSH
+        access tokens for the box are revoked. Returns the updated box object.
+      tags: [SSH]
+      parameters:
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Specific token to revoke. Omit to revoke all tokens for the box.
+      responses:
+        "200":
+          description: SSH access revoked; returns the updated box
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Box"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+
+  /{prefix}/boxes/ssh-access/validate:
+    parameters:
+      - $ref: "#/components/parameters/prefix"
+
+    get:
+      operationId: validateSshAccess
+      summary: Validate an SSH access token
+      description: |
+        Validates an SSH access token and returns the associated box ID and
+        Unix user. Used by the SSH gateway to authenticate incoming connections.
+      tags: [SSH]
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+          description: SSH access token to validate.
+      responses:
+        "200":
+          description: Token validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SshAccessValidationResult"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+
+  # -------------------------------------------------------------------------
   # Images
   # -------------------------------------------------------------------------
   /{prefix}/images/pull:
@@ -2043,4 +2136,70 @@ components:
         next_page_token:
           type: string
           nullable: true
-          description: Opaque token for next page
+
+    # -------------------------------------------------------------------------
+    # SSH Access schemas
+    # -------------------------------------------------------------------------
+    SshAccess:
+      type: object
+      required: [id, sandboxId, token, expiresAt, createdAt, updatedAt, sshCommand]
+      description: SSH access token and connection details for a box.
+      properties:
+        id:
+          type: string
+          description: Unique identifier for this SSH access record.
+          example: "ssh_01JVKM3Q4R5T6W7X8Y9Z0A1B2C"
+        sandboxId:
+          type: string
+          description: ID of the box this token grants access to.
+          example: "box_01JVKM3Q4R5T6W7X8Y9Z0A1B2C"
+        token:
+          type: string
+          description: Opaque SSH access token. Use as the SSH username when connecting.
+          example: "sat_01JVKM3Q4R5T6W7X8Y9Z0A1B2C"
+        expiresAt:
+          type: string
+          format: date-time
+          description: When this token expires.
+        createdAt:
+          type: string
+          format: date-time
+          description: When this token was created.
+        updatedAt:
+          type: string
+          format: date-time
+          description: When this token was last updated.
+        sshCommand:
+          type: string
+          description: Ready-to-use `ssh` command for connecting to the box.
+          example: "ssh sat_01JVKM3Q4R5T6W7X8Y9Z0A1B2C@ssh.boxlite.ai"
+
+    SshAccessValidationResult:
+      type: object
+      required: [valid, sandboxId]
+      description: Result of validating an SSH access token.
+      properties:
+        valid:
+          type: boolean
+          description: Whether the token is valid and not expired.
+        sandboxId:
+          type: string
+          description: ID of the box associated with this token.
+          example: "box_01JVKM3Q4R5T6W7X8Y9Z0A1B2C"
+        unixUser:
+          type: string
+          nullable: true
+          description: Unix user the SSH session should run as. Null defaults to root.
+          example: "root"
+
+    CreateSshAccessRequest:
+      type: object
+      description: |
+        Optional body for SSH access creation. If omitted entirely, defaults apply
+        (root user, server-configured expiry).
+      properties:
+        unix_user:
+          type: string
+          nullable: true
+          description: Unix user account to use for the SSH session (e.g. "ubuntu", "root").
+          example: "ubuntu"

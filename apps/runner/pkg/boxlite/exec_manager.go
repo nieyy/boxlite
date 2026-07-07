@@ -454,6 +454,11 @@ func (m *ExecManager) Signal(id string, sig int) error {
 	if reaping {
 		return fmt.Errorf("%w: %s", ErrExecReaping, id)
 	}
+	select {
+	case <-e.Done:
+		return fmt.Errorf("%w: %s", ErrExecClosed, id)
+	default:
+	}
 	e.handleMu.Lock()
 	defer e.handleMu.Unlock()
 	if e.closed || e.isDone() || e.execution == nil {

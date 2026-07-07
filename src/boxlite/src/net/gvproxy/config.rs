@@ -51,7 +51,11 @@ pub struct GvproxyConfig {
     pub socket_path: PathBuf,
 
     /// Unix socket path for gvproxy's control API (ServicesMux: dynamic port
-    /// forwarding / DNS / DHCP leases / stats). Empty means it is not exposed.
+    /// forwarding / DNS / DHCP leases / stats — including the runner's
+    /// expose/unexpose calls for real-SSH port forwarding). Empty means it is
+    /// not exposed. In practice always set by [`super::instance`] (a sibling
+    /// of `socket_path`, see [`super::control_socket_path`]), so the runner
+    /// can rely on it being present and bound.
     #[serde(default)]
     pub control_socket_path: PathBuf,
 

@@ -117,7 +117,7 @@ export class UserController {
   @Audit({
     action: AuditAction.REGENERATE_KEY_PAIR,
     targetType: AuditTarget.USER,
-    targetIdFromRequest: (req) => req.params.id,
+    targetIdFromRequest: (req) => req.params.id as string,
   })
   async regenerateKeyPair(@Param('id') id: string): Promise<User> {
     return this.userService.regenerateKeyPair(id)

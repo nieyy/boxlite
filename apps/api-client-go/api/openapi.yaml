@@ -2458,6 +2458,12 @@ paths:
         schema:
           type: number
         style: form
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSshAccessBodyDto"
+        required: false
       responses:
         "200":
           content:
@@ -6751,6 +6757,16 @@ components:
       - token
       - url
       type: object
+    CreateSshAccessBodyDto:
+      example:
+        unixUser: boxlite
+      properties:
+        unixUser:
+          description: Unix user for SSH access (camelCase form)
+          example: boxlite
+          pattern: "^([a-z_][a-z0-9_-]{0,31})?$"
+          type: string
+      type: object
     SshAccessDto:
       example:
         id: 123e4567-e89b-12d3-a456-426614174000
@@ -6805,6 +6821,7 @@ components:
       example:
         valid: true
         boxId: 123e4567-e89b-12d3-a456-426614174000
+        unixUser: boxlite
       properties:
         valid:
           description: Whether the SSH access token is valid
@@ -6813,6 +6830,12 @@ components:
         boxId:
           description: ID of the box this SSH access is for
           example: 123e4567-e89b-12d3-a456-426614174000
+          type: string
+        unixUser:
+          description: Unix user for real-SSH access; null for legacy exec-bridge
+            tokens
+          example: boxlite
+          nullable: true
           type: string
       required:
       - boxId

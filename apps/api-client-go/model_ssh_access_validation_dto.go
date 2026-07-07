@@ -25,6 +25,8 @@ type SshAccessValidationDto struct {
 	Valid bool `json:"valid"`
 	// ID of the box this SSH access is for
 	BoxId string `json:"boxId"`
+	// Unix user for real-SSH access; null for legacy exec-bridge tokens
+	UnixUser NullableString `json:"unixUser,omitempty"`
 	AdditionalProperties map[string]interface{}
 }
 
@@ -97,6 +99,48 @@ func (o *SshAccessValidationDto) SetBoxId(v string) {
 	o.BoxId = v
 }
 
+// GetUnixUser returns the UnixUser field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *SshAccessValidationDto) GetUnixUser() string {
+	if o == nil || IsNil(o.UnixUser.Get()) {
+		var ret string
+		return ret
+	}
+	return *o.UnixUser.Get()
+}
+
+// GetUnixUserOk returns a tuple with the UnixUser field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *SshAccessValidationDto) GetUnixUserOk() (*string, bool) {
+	if o == nil {
+		return nil, false
+	}
+	return o.UnixUser.Get(), o.UnixUser.IsSet()
+}
+
+// HasUnixUser returns a boolean if a field has been set.
+func (o *SshAccessValidationDto) HasUnixUser() bool {
+	if o != nil && o.UnixUser.IsSet() {
+		return true
+	}
+
+	return false
+}
+
+// SetUnixUser gets a reference to the given NullableString and assigns it to the UnixUser field.
+func (o *SshAccessValidationDto) SetUnixUser(v string) {
+	o.UnixUser.Set(&v)
+}
+// SetUnixUserNil sets the value for UnixUser to be an explicit nil
+func (o *SshAccessValidationDto) SetUnixUserNil() {
+	o.UnixUser.Set(nil)
+}
+
+// UnsetUnixUser ensures that no value is present for UnixUser, not even an explicit nil
+func (o *SshAccessValidationDto) UnsetUnixUser() {
+	o.UnixUser.Unset()
+}
+
 func (o SshAccessValidationDto) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -109,6 +153,9 @@ func (o SshAccessValidationDto) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["valid"] = o.Valid
 	toSerialize["boxId"] = o.BoxId
+	if o.UnixUser.IsSet() {
+		toSerialize["unixUser"] = o.UnixUser.Get()
+	}
 
 	for key, value := range o.AdditionalProperties {
 		toSerialize[key] = value
@@ -155,6 +202,7 @@ func (o *SshAccessValidationDto) UnmarshalJSON(data []byte) (err error) {
 	if err = json.Unmarshal(data, &additionalProperties); err == nil {
 		delete(additionalProperties, "valid")
 		delete(additionalProperties, "boxId")
+		delete(additionalProperties, "unixUser")
 		o.AdditionalProperties = additionalProperties
 	}
 

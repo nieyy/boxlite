@@ -382,6 +382,19 @@ enum BoxliteErrorCode boxlite_start_box(CBoxHandle *handle,
 
 char *boxlite_box_id(CBoxHandle *handle);
 
+// Returns the path to gvproxy's ServicesMux control Unix socket for this box
+// (used for the runner's real-SSH port-forward expose/unexpose calls, among
+// other ServicesMux features).
+//
+// The path follows the layout: `<home_dir>/boxes/<box_id>/sockets/gvproxy-ctl.sock`
+// — must stay in sync with `boxlite::net::gvproxy::control_socket_path`
+// (`src/boxlite/src/net/gvproxy/mod.rs`), which derives the same path as a
+// sibling of the box's `net.sock`.
+//
+// The caller must free the returned string with `boxlite_free_string`.
+// Returns NULL if handle is NULL or home_dir is not set (e.g. REST runtime).
+char *boxlite_box_admin_sock_path(CBoxHandle *handle);
+
 void boxlite_box_free(CBoxHandle *handle);
 
 enum BoxliteErrorCode boxlite_copy_into(CBoxHandle *handle,

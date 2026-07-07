@@ -27,6 +27,7 @@ import (
 	"github.com/boxlite-ai/runner/pkg/runner/v2/poller"
 	"github.com/boxlite-ai/runner/pkg/services"
 	"github.com/boxlite-ai/runner/pkg/sshgateway"
+	"github.com/boxlite-ai/runner/pkg/sshport"
 	"github.com/boxlite-ai/runner/pkg/telemetry/filters"
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-isatty"
@@ -105,6 +106,8 @@ func run() int {
 		}
 	}
 
+	sshAlloc := sshport.NewAllocator(cfg.SSHPortBase, cfg.SSHPortPoolSize)
+
 	boxliteClient, err := blclient.NewClient(ctx, blclient.ClientConfig{
 		Logger:                       logger,
 		HomeDir:                      cfg.BoxliteHomeDir,
@@ -120,6 +123,7 @@ func run() int {
 		VolumeCleanupInterval:        cfg.VolumeCleanupInterval,
 		VolumeCleanupDryRun:          cfg.VolumeCleanupDryRun,
 		VolumeCleanupExclusionPeriod: cfg.VolumeCleanupExclusionPeriod,
+		SSHPortAllocator:             sshAlloc,
 	})
 	if err != nil {
 		logger.Error("Error creating BoxLite client", "error", err)
@@ -165,6 +169,7 @@ func run() int {
 		Boxlite:          boxliteClient,
 		BoxService:       boxService,
 		MetricsCollector: metricsCollector,
+		SSHPortAllocator: sshAlloc,
 	})
 	if err != nil {
 		logger.Error("Failed to initialize runner instance", "error", err)

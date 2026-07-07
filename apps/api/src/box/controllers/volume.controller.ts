@@ -155,7 +155,7 @@ export class VolumeController {
   @Audit({
     action: AuditAction.DELETE,
     targetType: AuditTarget.VOLUME,
-    targetIdFromRequest: (req) => req.params.volumeId,
+    targetIdFromRequest: (req) => req.params.volumeId as string,
   })
   @UseGuards(VolumeAccessGuard)
   async deleteVolume(@Param('volumeId') volumeId: string): Promise<void> {
