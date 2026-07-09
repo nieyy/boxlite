@@ -831,7 +831,10 @@ export class BoxController {
   })
   async validateSshAccess(@Query('token') token: string): Promise<SshAccessValidationDto> {
     const result = await this.boxService.validateSshAccess(token)
-    return SshAccessValidationDto.fromValidationResult(result.valid, result.boxId)
+    return SshAccessValidationDto.fromValidationResult(result.valid, result.boxId, {
+      unixUser: result.unixUser,
+      tokenId: result.tokenId,
+    })
   }
 
   @Get(':boxId/toolbox-proxy-url')

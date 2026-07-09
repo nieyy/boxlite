@@ -169,6 +169,9 @@ pub struct InstanceSpec {
     pub transport: boxlite_shared::BoxTransport,
     /// Host-side transport for ready notification (host listens, guest connects when ready)
     pub ready_transport: boxlite_shared::BoxTransport,
+    /// Host-side transport for guest SSH sessions (libkrun listens, host dials,
+    /// boxlite-guest's SSH service accepts on vsock — same shape as `transport`)
+    pub ssh_transport: boxlite_shared::BoxTransport,
     /// Resolved guest rootfs path and assembly strategy
     pub guest_rootfs: GuestRootfs,
     /// Network provisioning spec passed to the shim subprocess. The shim stands

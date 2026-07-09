@@ -27,6 +27,7 @@ fn main() {
         println!("cargo:warning=BOXLITE_DEPS_STUB mode: skipping e2fsprogs build");
         println!("cargo:mke2fs_BOXLITE_DEP=/nonexistent");
         println!("cargo:debugfs_BOXLITE_DEP=/nonexistent");
+        println!("cargo:resize2fs_BOXLITE_DEP=/nonexistent");
         return;
     }
 
@@ -37,11 +38,13 @@ fn main() {
 
     let mke2fs_path = build_dir.join("misc/mke2fs");
     let debugfs_path = build_dir.join("debugfs/debugfs");
+    let resize2fs_path = build_dir.join("resize/resize2fs");
 
     build_e2fsprogs(&vendor_dir, &build_dir);
 
     println!("cargo:mke2fs_BOXLITE_DEP={}", mke2fs_path.display());
     println!("cargo:debugfs_BOXLITE_DEP={}", debugfs_path.display());
+    println!("cargo:resize2fs_BOXLITE_DEP={}", resize2fs_path.display());
 }
 
 fn build_e2fsprogs(vendor_dir: &Path, build_dir: &Path) {
@@ -65,7 +68,8 @@ fn build_e2fsprogs(vendor_dir: &Path, build_dir: &Path) {
             "--disable-threads",
             "--disable-tdb",
             "--disable-imager",
-            "--disable-resizer",
+            // resizer stays enabled: resize2fs grows the staged guest rootfs
+            // before the guest binaries are injected (disk/ext4.rs grow_ext4).
             "--disable-defrag",
             "--disable-fsck",
             "--disable-e2initrd-helper",
@@ -118,6 +122,19 @@ fn build_e2fsprogs(vendor_dir: &Path, build_dir: &Path) {
 
     if !status.success() {
         panic!("make debugfs failed");
+    }
+
+    // Build resize2fs
+    let status = Command::new("make")
+        .current_dir(build_dir.join("resize"))
+        .args(["-j", &jobs, "resize2fs"])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .expect("Failed to run make resize2fs");
+
+    if !status.success() {
+        panic!("make resize2fs failed");
     }
 
     println!("cargo:warning=e2fsprogs build complete");

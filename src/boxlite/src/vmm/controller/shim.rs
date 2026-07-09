@@ -331,6 +331,7 @@ impl VmmController for ShimController {
             guest_entrypoint,
             transport: config.transport.clone(),
             ready_transport: config.ready_transport.clone(),
+            ssh_transport: config.ssh_transport.clone(),
             guest_rootfs: config.guest_rootfs.clone(),
             network_backend_spec: config.network_backend_spec.clone(), // provisioning spec passed to the shim (stands up gvproxy)
             network_backend_endpoint: None, // Will be populated by shim (not serialized)
@@ -345,13 +346,17 @@ impl VmmController for ShimController {
         let config_json = serde_json::to_string(&serializable_config)
             .map_err(|e| BoxliteError::Engine(format!("Failed to serialize config: {}", e)))?;
 
-        // Clean up stale socket file if it exists (defense in depth)
-        // Only relevant for Unix sockets
-        if let boxlite_shared::BoxTransport::Unix { socket_path } = &config.transport
-            && socket_path.exists()
-        {
-            tracing::warn!("Removing stale Unix socket: {}", socket_path.display());
-            let _ = std::fs::remove_file(socket_path);
+        // Clean up stale socket files if they exist (defense in depth).
+        // Both sockets are bound by libkrun (listen=true), whose
+        // UnixAcceptorProxy binds without unlinking — a leftover file from a
+        // previous run would fail that bind. Only relevant for Unix sockets.
+        for stale_transport in [&config.transport, &config.ssh_transport] {
+            if let boxlite_shared::BoxTransport::Unix { socket_path } = stale_transport
+                && socket_path.exists()
+            {
+                tracing::warn!("Removing stale Unix socket: {}", socket_path.display());
+                let _ = std::fs::remove_file(socket_path);
+            }
         }
 
         // Spawn Box subprocess with piped stdio

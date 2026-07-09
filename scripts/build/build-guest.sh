@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build boxlite-guest binary on macOS or Linux
+# Build the guest-side binary (boxlite-guest) on macOS or Linux
 #
 # Prerequisites: Run the appropriate setup script first:
 #   - macOS: scripts/setup/setup-macos.sh
@@ -10,7 +10,7 @@
 #   ./build-guest.sh [--dest-dir DIR] [--profile PROFILE]
 #
 # Options:
-#   --dest-dir DIR      Directory to copy the guest binary to
+#   --dest-dir DIR      Directory to copy the guest binaries to
 #   --profile PROFILE   Build profile: release or debug (default: release)
 
 set -e
@@ -70,9 +70,13 @@ parse_args() {
 
 parse_args "$@"
 
+# Guest-side binaries injected into the rootfs; all built for $GUEST_TARGET
+# and required to be statically linked.
+GUEST_BINARIES=("boxlite-guest")
+
 # Detect OS
 OS=$(detect_os)
-print_header "Building boxlite-guest on $OS..."
+print_header "Building guest binaries (${GUEST_BINARIES[*]}) on $OS..."
 
 # Verify prerequisites (fail fast)
 check_prerequisites() {
@@ -96,10 +100,37 @@ setup_rust_target() {
     fi
 }
 
-# Build the guest binary
-build_guest_binary() {
+# Fail unless the built binary is statically linked (VM has no shared libs).
+verify_static_linkage() {
+    local binary_name="$1"
+    local binary_path="$PROJECT_ROOT/target/$GUEST_TARGET/$PROFILE/$binary_name"
+    local file_output
+    file_output=$(file "$binary_path")
+    if echo "$file_output" | grep -q "dynamically linked"; then
+        local musl_arch
+        musl_arch=$(echo "$GUEST_TARGET" | cut -d'-' -f1)
+        local musl_gcc="${musl_arch}-linux-musl-gcc"
+
+        print_error "$binary_name is dynamically linked, but must be statically linked"
+        echo ""
+        echo "❌ Error: The $binary_name binary must be statically linked."
+        echo ""
+        echo "The guest binary at $binary_path is dynamically linked, which means"
+        echo "it depends on shared libraries that won't be available inside the VM."
+        echo ""
+        echo "🔧 To fix this issue:"
+        echo "  Check your $musl_gcc version:"
+        echo "  $ $musl_gcc --version"
+        echo "  Verify whether your C compiler is a gnu-gcc wrapper instead of true musl-gcc"
+        echo ""
+        exit 1
+    fi
+}
+
+# Build the guest binaries
+build_guest_binaries() {
     cd "$PROJECT_ROOT"
-    echo "🔨 Building guest binary for $GUEST_TARGET $PROFILE..."
+    echo "🔨 Building guest binaries (${GUEST_BINARIES[*]}) for $GUEST_TARGET $PROFILE..."
     local build_flag=""
     if [ "$PROFILE" = "release" ]; then
         build_flag="--release"
@@ -126,38 +157,26 @@ build_guest_binary() {
     source "$SCRIPT_BUILD_DIR/build-libseccomp.sh"
     ensure_libseccomp_for_target "$GUEST_TARGET"
 
-    cargo build $build_flag --target "$GUEST_TARGET" -p boxlite-guest
+    local package_flags=()
+    local binary_name
+    for binary_name in "${GUEST_BINARIES[@]}"; do
+        package_flags+=(-p "$binary_name")
+    done
+    cargo build $build_flag --target "$GUEST_TARGET" "${package_flags[@]}"
 
-    # Verify guest binary is statically linked
-    local guest_binary="$PROJECT_ROOT/target/$GUEST_TARGET/$PROFILE/boxlite-guest"
-    local file_output
-    file_output=$(file "$guest_binary")
-    if echo "$file_output" | grep -q "dynamically linked"; then 
-        local musl_arch
-        musl_arch=$(echo "$GUEST_TARGET" | cut -d'-' -f1)
-        local musl_gcc="${musl_arch}-linux-musl-gcc"
-
-        print_error "boxlite-guest is dynamically linked, but must be statically linked"
-        echo ""
-        echo "❌ Error: The boxlite-guest binary must be statically linked."
-        echo ""
-        echo "The guest binary at $guest_binary is dynamically linked, which means"
-        echo "it depends on shared libraries that won't be available inside the VM."
-        echo ""
-        echo "🔧 To fix this issue:"
-        echo "  Check your $musl_gcc version:"
-        echo "  $ $musl_gcc --version"
-        echo "  Verify whether your C compiler is a gnu-gcc wrapper instead of true musl-gcc"
-        echo ""
-        exit 1
-    fi
+    for binary_name in "${GUEST_BINARIES[@]}"; do
+        verify_static_linkage "$binary_name"
+    done
 }
 
-# Copy binary to destination
+# Copy binaries to destination
 copy_to_destination() {
+    local binary_name
     if [ -z "$DEST_DIR" ]; then
-        echo "✅ Guest binary built successfully (no destination specified)"
-        echo "Binary location: $PROJECT_ROOT/target/$GUEST_TARGET/$PROFILE/boxlite-guest"
+        echo "✅ Guest binaries built successfully (no destination specified)"
+        for binary_name in "${GUEST_BINARIES[@]}"; do
+            echo "Binary location: $PROJECT_ROOT/target/$GUEST_TARGET/$PROFILE/$binary_name"
+        done
         return 0
     fi
 
@@ -165,23 +184,27 @@ copy_to_destination() {
     # Absolute paths are used as-is
     echo "📦 Copying to destination: $DEST_DIR"
     mkdir -p "$DEST_DIR"
-    cp "$PROJECT_ROOT/target/$GUEST_TARGET/$PROFILE/boxlite-guest" "$DEST_DIR/"
+    for binary_name in "${GUEST_BINARIES[@]}"; do
+        cp "$PROJECT_ROOT/target/$GUEST_TARGET/$PROFILE/$binary_name" "$DEST_DIR/"
+    done
 
-    echo "✅ Guest binary built and copied to $DEST_DIR"
+    echo "✅ Guest binaries built and copied to $DEST_DIR"
     echo "Binary info:"
-    ls -lh "$DEST_DIR/boxlite-guest"
-    file "$DEST_DIR/boxlite-guest"
+    for binary_name in "${GUEST_BINARIES[@]}"; do
+        ls -lh "$DEST_DIR/$binary_name"
+        file "$DEST_DIR/$binary_name"
+    done
 }
 
 # Main execution
 main() {
     check_prerequisites
     setup_rust_target
-    build_guest_binary
+    build_guest_binaries
     copy_to_destination
 
     echo ""
-    print_success "Done! Guest binary is ready for packaging."
+    print_success "Done! Guest binaries are ready for packaging."
 }
 
 main "$@"

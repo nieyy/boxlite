@@ -6805,6 +6805,8 @@ components:
       example:
         valid: true
         boxId: 123e4567-e89b-12d3-a456-426614174000
+        unixUser: root
+        tokenId: 123e4567-e89b-12d3-a456-426614174000
       properties:
         valid:
           description: Whether the SSH access token is valid
@@ -6812,6 +6814,15 @@ components:
           type: boolean
         boxId:
           description: ID of the box this SSH access is for
+          example: 123e4567-e89b-12d3-a456-426614174000
+          type: string
+        unixUser:
+          description: Guest unix user the SSH session runs as
+          example: root
+          type: string
+        tokenId:
+          description: "Non-sensitive identifier of the SSH access token, for audit\
+            \ correlation"
           example: 123e4567-e89b-12d3-a456-426614174000
           type: string
       required:

@@ -13,7 +13,7 @@
 #
 # The runtime directory will contain:
 #   - boxlite-shim      VM subprocess runner (statically links libkrun + libgvproxy)
-#   - boxlite-guest     Guest agent (Linux binary)
+#   - boxlite-guest     Guest agent, including its in-process SSH session service (Linux binary)
 #   - libkrunfw.*       libkrunfw library (dlopen'd at runtime)
 
 set -e
@@ -42,7 +42,7 @@ Options:
 
 The runtime directory will contain:
   - boxlite-shim      VM subprocess runner (statically links libkrun + libgvproxy)
-  - boxlite-guest     Guest agent (Linux binary)
+  - boxlite-guest     Guest agent, including its in-process SSH session service (Linux binary)
   - libkrunfw.*       libkrunfw library (dlopen'd at runtime)
 
 Examples:
@@ -167,37 +167,35 @@ build_shim() {
     fi
 }
 
-# Build boxlite-guest binary
+# Build guest binary (boxlite-guest)
 build_guest() {
     echo ""
-    print_section "Building boxlite-guest binary..."
+    print_section "Building guest binaries..."
 
     source "$SCRIPT_DIR/util.sh"
     local guest_path="$PROJECT_ROOT/target/$GUEST_TARGET/$PROFILE/boxlite-guest"
 
     # Skip build if SKIP_GUEST_BUILD=1 and binary exists
-    # Used in CI when guest is pre-built on Ubuntu host
+    # Used in CI when guest binary is pre-built on Ubuntu host
     if [ "${SKIP_GUEST_BUILD:-0}" = "1" ]; then
-        if [ -f "$guest_path" ] && [ -x "$guest_path" ]; then
-            GUEST_BINARY="$guest_path"
-            print_success "Using pre-built: $guest_path (SKIP_GUEST_BUILD=1)"
-            return 0
-        else
+        if [ ! -f "$guest_path" ] || [ ! -x "$guest_path" ]; then
             print_error "SKIP_GUEST_BUILD=1 but guest binary not found at $guest_path"
             exit 1
         fi
+        GUEST_BINARY="$guest_path"
+        print_success "Using pre-built: $guest_path (SKIP_GUEST_BUILD=1)"
+        return 0
     fi
 
     # Build guest binary
     bash "$SCRIPT_BUILD_DIR/build-guest.sh" --profile "$PROFILE"
 
-    if [ -f "$guest_path" ]; then
-        GUEST_BINARY="$guest_path"
-        print_success "Built: $guest_path"
-    else
-        print_error "Failed to build boxlite-guest"
+    if [ ! -f "$guest_path" ]; then
+        print_error "Failed to build $(basename "$guest_path")"
         exit 1
     fi
+    GUEST_BINARY="$guest_path"
+    print_success "Built: $guest_path"
 }
 
 # Find and collect FFI libraries

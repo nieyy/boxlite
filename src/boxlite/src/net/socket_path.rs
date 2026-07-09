@@ -64,6 +64,8 @@ const BOX_SOCK: &str = "box.sock";
 const READY_SOCK: &str = "ready.sock";
 /// Network backend (gvproxy) socket filename.
 const NET_SOCK: &str = "net.sock";
+/// Guest SSH session socket filename.
+const SSH_SOCK: &str = "ssh.sock";
 
 /// Base directory for binding symlinks. Deliberately literal — see module docs.
 const SYMLINK_BASE: &str = "/tmp";
@@ -128,6 +130,12 @@ impl BoxSockets {
     /// `net.sock-krun.sock` from this path — the longest path in the dir).
     pub fn net_backend_sock(&self) -> PathBuf {
         self.binding_dir().join(NET_SOCK)
+    }
+
+    /// Guest SSH session socket (host dials, krun bridges to guest vsock —
+    /// same listen=true shape as [`Self::box_sock`]).
+    pub fn ssh_sock(&self) -> PathBuf {
+        self.binding_dir().join(SSH_SOCK)
     }
 
     /// Ensure the binding symlink exists and is correct. Idempotent;
@@ -326,9 +334,35 @@ mod tests {
         assert_eq!(s.box_sock(), expect.join("box.sock"));
         assert_eq!(s.ready_sock(), expect.join("ready.sock"));
         assert_eq!(s.net_backend_sock(), expect.join("net.sock"));
-        for p in [s.box_sock(), s.ready_sock(), s.net_backend_sock()] {
+        assert_eq!(s.ssh_sock(), expect.join("ssh.sock"));
+        for p in [
+            s.box_sock(),
+            s.ready_sock(),
+            s.net_backend_sock(),
+            s.ssh_sock(),
+        ] {
             assert!(p.as_os_str().len() + "-krun.sock".len() < MAX_SUN_PATH);
         }
+        // ssh.sock must never become the longest name in the dir — the
+        // sun_path sanity check in ensure() is derived from LONGEST_SOCKET_NAME.
+        assert!(SSH_SOCK.len() <= LONGEST_SOCKET_NAME.len());
+    }
+
+    #[test]
+    fn ssh_sock_binds_through_symlink_and_survives_sweep() {
+        let (_tmp, s) = unique_sockets("sshsock1");
+        s.ensure().unwrap();
+
+        let listener = std::os::unix::net::UnixListener::bind(s.ssh_sock()).unwrap();
+        // Socket file physically lives in the real directory.
+        assert!(s.real_dir().join("ssh.sock").exists());
+
+        // A live box's ssh.sock must stay dialable across a startup sweep.
+        BoxSockets::sweep_stale();
+        let _stream = std::os::unix::net::UnixStream::connect(s.ssh_sock()).unwrap();
+
+        drop(listener);
+        s.remove();
     }
 
     #[test]

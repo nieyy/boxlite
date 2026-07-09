@@ -102,10 +102,30 @@ export class SshAccessValidationDto {
   })
   boxId: string
 
-  static fromValidationResult(valid: boolean, boxId: string): SshAccessValidationDto {
+  @ApiProperty({
+    required: false,
+    description: 'Guest unix user the SSH session runs as',
+    example: 'root',
+  })
+  unixUser?: string
+
+  @ApiProperty({
+    required: false,
+    description: 'Non-sensitive identifier of the SSH access token, for audit correlation',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  tokenId?: string
+
+  static fromValidationResult(
+    valid: boolean,
+    boxId: string,
+    session?: { unixUser?: string; tokenId?: string },
+  ): SshAccessValidationDto {
     const dto = new SshAccessValidationDto()
     dto.valid = valid
     dto.boxId = boxId
+    dto.unixUser = session?.unixUser
+    dto.tokenId = session?.tokenId
     return dto
   }
 }

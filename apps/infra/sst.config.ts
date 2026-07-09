@@ -730,6 +730,43 @@ export default $config({
       {},
     )
 
+    // SSH Gateway (russh, Rust): staging-only side-by-side rollout of the new
+    // src/ssh-gateway-russh gateway, alongside the Go one above — not a
+    // replacement yet. Guarded by isProd (belt-and-suspenders: `staging` is
+    // the only stage this ever runs under regardless). Reuses the same Hosted
+    // API credential (sshGatewayApiKey) and the Runner's own bearer token
+    // (defaultRunnerApiKey) — the new gateway has no separate internal
+    // service token, same as the Go one. Host key is NOT persisted yet: it
+    // regenerates on every task restart, so clients see a changed host-key
+    // fingerprint warning across restarts. Acceptable for staging validation;
+    // must be fixed (persistent volume or Secrets Manager) before any
+    // production traffic.
+    if (!isProd) {
+      const sshGatewayRussh = new sst.aws.Service('SshGatewayRussh', {
+        cluster,
+        image: { context: '../..', dockerfile: 'src/ssh-gateway-russh/Dockerfile', cache: false },
+        loadBalancer: { rules: [{ listen: `${PORTS.SSH_GATEWAY}/tcp`, forward: `${PORTS.SSH_GATEWAY}/tcp` }] },
+        environment: {
+          BOXLITE_SSH_HOST_KEY_PATH: '/var/lib/boxlite-ssh-gateway/host-key',
+          // The Nest control plane is globally mounted under /api.
+          BOXLITE_HOSTED_API_URL: $interpolate`${stripTrailingSlash(api.url)}/api`,
+          BOXLITE_HOSTED_API_TOKEN: envOr('SSH_GATEWAY_API_KEY', sshGatewayApiKey.result),
+          BOXLITE_RUNNER_SERVICE_TOKEN: envOr('DEFAULT_RUNNER_API_KEY', defaultRunnerApiKey.result),
+          BOXLITE_SSH_TARGET: 'russh-vsock',
+        },
+      })
+
+      cloudflareDns.createAlias(
+        'SshGatewayRussh',
+        {
+          name: `ssh-russh.${stackDomain}`,
+          aliasName: sshGatewayRussh.nodes.loadBalancer.dnsName,
+          aliasZone: sshGatewayRussh.nodes.loadBalancer.zoneId,
+        },
+        {},
+      )
+    }
+
     // ─── 8. ADMIN UIs ────────────────────────────────────────────────────────
     // pgAdmin security gate. pgAdmin is a
     // Postgres admin console one hop from RDS. Knobs are overridable via env;

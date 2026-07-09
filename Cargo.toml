@@ -3,6 +3,8 @@ members = [
     "src/boxlite",
     "src/cli",
     "src/shared",
+    "src/session-frame",
+    "src/ssh-gateway-russh",
     "src/guest",
     "src/shim",
     "src/test-utils",

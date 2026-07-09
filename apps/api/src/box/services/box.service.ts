@@ -84,6 +84,9 @@ const DEFAULT_BOX_MEM = 1
 const DEFAULT_BOX_DISK = 10
 const DEFAULT_BOX_GPU = 0
 const TERMINAL_PREVIEW_PORT = 22222
+// The guest's SSH service only accepts sessions for this account, so the
+// validation contract reports it instead of letting the gateway guess.
+const SSH_ACCESS_UNIX_USER = 'root'
 
 @Injectable()
 export class BoxService {
@@ -1565,10 +1568,12 @@ export class BoxService {
         return {
           valid: true,
           boxId: sshAccess.box.id,
+          unixUser: SSH_ACCESS_UNIX_USER,
+          tokenId: sshAccess.id,
         }
       }
     }
 
-    return { valid: true, boxId: sshAccess.box.id }
+    return { valid: true, boxId: sshAccess.box.id, unixUser: SSH_ACCESS_UNIX_USER, tokenId: sshAccess.id }
   }
 }

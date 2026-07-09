@@ -139,6 +139,7 @@ async fn build_config(
     // BoxTransport setup
     let transport = BoxTransport::unix(layout.socket_path());
     let ready_transport = BoxTransport::unix(layout.ready_socket_path());
+    let ssh_transport = BoxTransport::unix(layout.ssh_socket_path());
 
     let user_volumes = resolve_user_volumes(&options.volumes)?;
 
@@ -241,6 +242,7 @@ async fn build_config(
         guest_entrypoint,
         transport: transport.clone(),
         ready_transport: ready_transport.clone(),
+        ssh_transport,
         guest_rootfs,
         network_backend_spec,
         network_backend_endpoint: None,

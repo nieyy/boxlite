@@ -458,6 +458,27 @@ impl Vmm for Krun {
             );
             ctx.add_vsock_port(network::GUEST_READY_PORT, ready_socket_path, false)?;
 
+            // Configure SSH session channel (Unix socket bridged to vsock)
+            // listen=true: libkrun creates socket, host connects,
+            // boxlite-guest's SSH service accepts via vsock — same shape as
+            // the gRPC channel.
+            let ssh_socket_path = match &config.ssh_transport {
+                boxlite_shared::BoxTransport::Unix { socket_path } => socket_path
+                    .to_str()
+                    .ok_or_else(|| BoxliteError::Engine("invalid SSH socket path".into()))?,
+                _ => {
+                    return Err(BoxliteError::Engine(
+                        "SSH transport must be Unix socket on host side".into(),
+                    ));
+                }
+            };
+            tracing::debug!(
+                socket_path = ssh_socket_path,
+                guest_port = network::GUEST_SSH_PORT,
+                "Configuring vsock bridge for SSH sessions"
+            );
+            ctx.add_vsock_port(network::GUEST_SSH_PORT, ssh_socket_path, true)?;
+
             // Configure console output redirection if specified
             if let Some(console_path) = &config.console_output {
                 let console_path_str = console_path.to_str().ok_or_else(|| {

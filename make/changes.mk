@@ -1,5 +1,5 @@
 # Detect changed components by diffing against main (or HEAD~1 if on main).
-# Returns a space-separated list of component tags: rust cli ffi python node c go apps
+# Returns a space-separated list of component tags: rust guest cli ssh_gateway ffi python node c go apps
 define detect_changes
 $(shell \
   BRANCH=$$(git rev-parse --abbrev-ref HEAD 2>/dev/null); \
@@ -13,8 +13,11 @@ $(shell \
   echo "$$CHANGED" | grep -q '^src/boxlite/' && printf 'rust '; \
   echo "$$CHANGED" | grep -q '^src/shared/' && printf 'rust '; \
   echo "$$CHANGED" | grep -q '^src/guest/' && printf 'rust '; \
+  echo "$$CHANGED" | grep -q '^src/guest/' && printf 'guest '; \
   echo "$$CHANGED" | grep -q '^src/shim/' && printf 'rust '; \
   echo "$$CHANGED" | grep -q '^src/cli/' && printf 'cli '; \
+  echo "$$CHANGED" | grep -q '^src/session-frame/' && printf 'ssh_gateway '; \
+  echo "$$CHANGED" | grep -q '^src/ssh-gateway-russh/' && printf 'ssh_gateway '; \
   echo "$$CHANGED" | grep -q '^sdks/python/' && printf 'python '; \
   echo "$$CHANGED" | grep -q '^sdks/node/' && printf 'node '; \
   echo "$$CHANGED" | grep -q '^sdks/c/' && printf 'c '; \

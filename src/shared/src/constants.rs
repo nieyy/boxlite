@@ -24,6 +24,18 @@ pub mod network {
     /// Guest connects to this port to signal it's ready to serve
     /// Port 2696 = "BOXM" on phone keypad
     pub const GUEST_READY_PORT: u32 = 2696;
+
+    /// Vsock port for the guest SSH session service, served in-process by
+    /// `boxlite-guest` (see `service::ssh`)
+    /// Port 2697 = "BOXP" on phone keypad
+    pub const GUEST_SSH_PORT: u32 = 2697;
+}
+
+/// Guest-internal session-service constants.
+pub mod guest_session {
+    /// The only Unix account guest SSH sessions may run as (Stage 1 is
+    /// single-user by design).
+    pub const SSH_UNIX_USER: &str = "root";
 }
 
 /// Executor environment variable

@@ -23,5 +23,13 @@ export interface SshAccessValidationDto {
      * ID of the box this SSH access is for
      */
     'boxId': string;
+    /**
+     * Guest unix user the SSH session runs as
+     */
+    'unixUser'?: string;
+    /**
+     * Non-sensitive identifier of the SSH access token, for audit correlation
+     */
+    'tokenId'?: string;
 }
 

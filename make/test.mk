@@ -101,8 +101,14 @@ test\:changed\:rust:
 	@$(MAKE) test:unit:rust
 	@$(MAKE) test:integration:rust
 
+test\:changed\:guest:
+	@$(MAKE) test:unit:guest
+
 test\:changed\:cli:
 	@$(MAKE) test:integration:cli
+
+test\:changed\:ssh_gateway:
+	@$(MAKE) test:unit:ssh-gateway
 
 test\:changed\:ffi:
 	@$(MAKE) test:unit:ffi
@@ -205,6 +211,34 @@ test\:unit\:rust:
 		cargo test -p boxlite-shared --lib -- --test-threads=1 $(CARGOTEST_FILTER) || rc=$$?; \
 	fi; \
 	exit $$rc
+
+# boxlite-guest unit tests (includes the in-process SSH session service under
+# service::ssh). The crate is Linux-only (compile_error!s on any other OS);
+# tests build natively for the host's own glibc target, not the musl target
+# used for shipping inside a VM, so this is skippable — not a hard failure —
+# on a macOS dev machine.
+test\:unit\:guest:
+	@if [ "$$(uname)" != "Linux" ]; then \
+		echo "⏭️  Skipping boxlite-guest tests (Linux-only, host is $$(uname))"; \
+		exit 0; \
+	fi; \
+	echo "🧪 Running boxlite-guest unit tests..."; \
+	if command -v cargo-nextest >/dev/null 2>&1; then \
+		cargo nextest run --no-tests=warn -p boxlite-guest --profile ci $(NEXTEST_FILTER); \
+	else \
+		cargo test -p boxlite-guest -- --test-threads=1 $(CARGOTEST_FILTER); \
+	fi
+
+# SSH gateway + session-frame tests: pure Rust, no libkrun/gvproxy, so unlike
+# test:unit:rust this runs the full `tests/` suites too (fake-Runner-backed
+# protocol E2E), not just --lib.
+test\:unit\:ssh-gateway:
+	@echo "🧪 Running ssh-gateway + session-frame tests..."
+	@if command -v cargo-nextest >/dev/null 2>&1; then \
+		cargo nextest run --no-tests=warn -p boxlite-ssh-gateway -p boxlite-session-frame $(NEXTEST_FILTER); \
+	else \
+		cargo test -p boxlite-ssh-gateway -p boxlite-session-frame -- --test-threads=1 $(CARGOTEST_FILTER); \
+	fi
 
 # Pre-warm Rust integration test image cache (internal helper, still callable).
 test\:warm-cache\:rust: $(if $(SETUP_DONE),,runtime\:debug)
@@ -369,6 +403,14 @@ test\:e2e\:setup:
 
 test\:e2e:
 	@cd scripts/test/e2e && python3 -m pytest cases/ -v
+
+# SSH gateway e2e: base stack + the real russh gateway on :2222, then only
+# the ssh-gateway case (not the full cases/ suite — kept independently fast).
+test\:e2e\:ssh-gateway-setup: test\:e2e\:setup
+	@scripts/test/e2e/bootstrap-ssh-gateway.sh
+
+test\:e2e\:ssh-gateway:
+	@cd scripts/test/e2e && python3 -m pytest cases/test_ssh_gateway.py -v
 
 test\:e2e\:two-sided:
 	@PR_REF=$${PR_REF:?must set PR_REF=<branch>} bash scripts/test/e2e/two_sided.sh

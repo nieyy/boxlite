@@ -15,6 +15,13 @@
 # Cost: c8i.4xlarge on-demand rate only while running + ~$4/mo EBS storage.
 # Subsequent runs skip setup/compilation (cached) → ~5-10 min → ~$0.03/run.
 #
+# On a src/ssh-gateway-russh or src/session-frame change, the e2e-tests job
+# also builds + starts the real russh SSH gateway (systemd, on top of the
+# same real API + Runner) and runs a real `ssh` client against it — on this
+# same instance, not a separate self-hosted pool (the static `[self-hosted,
+# kvm]` pool that e2e-stack.yml targets has been decommissioned; this is now
+# the only live self-hosted E2E runner in the repo).
+#
 # Authentication:
 #   AWS: GitHub OIDC → AWS STS (no stored AWS credentials)
 #   GitHub: GitHub App → short-lived installation token (no PAT)
@@ -41,6 +48,8 @@ on:
       - 'src/shared/**'
       - 'src/cli/**'
       - 'src/guest/**'
+      - 'src/ssh-gateway-russh/**'
+      - 'src/session-frame/**'
       - 'sdks/**'
       - '**/Cargo.toml'
       - 'Cargo.lock'
@@ -53,6 +62,8 @@ on:
       - 'src/shared/**'
       - 'src/cli/**'
       - 'src/guest/**'
+      - 'src/ssh-gateway-russh/**'
+      - 'src/session-frame/**'
       - 'sdks/**'
       - '**/Cargo.toml'
       - 'Cargo.lock'
@@ -122,6 +133,25 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Fork PR changed since its e2e-local approval. Remove and re-add the label to re-run e2e."
           fi
+
+  # Detect ssh-gateway-relevant changes so an unrelated e2e-local run (e.g.
+  # src/boxlite/src/rest) doesn't pay the extra ssh-gateway build+test cost —
+  # see the "Bootstrap + run ssh-gateway e2e" step below.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      ssh_gateway: ${{ steps.filter.outputs.ssh_gateway }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            ssh_gateway:
+              - 'src/ssh-gateway-russh/**'
+              - 'src/session-frame/**'
 
   # =========================================================================
   # Job 1: Start the persistent EC2 instance and wait for runner
@@ -322,7 +352,7 @@ jobs:
   # =========================================================================
   e2e-tests:
     name: E2E Integration Tests
-    needs: start-runner
+    needs: [start-runner, changes]
     runs-on:
       - self-hosted
       - boxlite-e2e
@@ -484,6 +514,30 @@ jobs:
           # The next run's Stage step rescues + uploads "$LOG_DIR".
           set -o pipefail
           make test:integration 2>&1 | tee "${LOG_DIR}/integration.log"
+
+      - name: Bootstrap + run ssh-gateway e2e
+        # Real API -> real Runner -> real VM -> real `ssh` client through
+        # src/ssh-gateway-russh, on the same already-warm instance — no
+        # separate EC2 instance/runner pool for this. Gated on the `changes`
+        # job so an unrelated e2e-local run (e.g. src/boxlite/src/rest) skips
+        # the extra build+bootstrap cost.
+        if: needs.changes.outputs.ssh_gateway == 'true'
+        env:
+          GH_RUN_ID: ${{ github.run_id }}
+          GH_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          source "$HOME/.cargo/env" 2>/dev/null || true
+          make test:e2e:setup
+          make test:e2e:ssh-gateway-setup
+          make test:e2e:ssh-gateway
+
+      - name: Collect ssh-gateway logs on failure
+        if: (failure() || cancelled()) && needs.changes.outputs.ssh_gateway == 'true'
+        run: |
+          tail -200 /var/log/boxlite-api.log 2>/dev/null || true
+          journalctl -u boxlite-runner --no-pager -n 200 2>/dev/null || true
+          tail -200 /var/log/boxlite-ssh-gateway.log 2>/dev/null || true
+          journalctl -u boxlite-ssh-gateway --no-pager -n 200 2>/dev/null || true
 
       - name: Upload test logs on failure or cancellation
         # `failure()` alone misses cancelled jobs (concurrency cancellation,

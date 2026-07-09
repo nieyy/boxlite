@@ -985,11 +985,15 @@ impl EmbeddedManifest {
         None
     }
 
-    /// Find pre-built boxlite-guest binary for the given build profile.
+    /// Find a pre-built musl guest-side binary for the given build profile.
     ///
     /// Checks matching architecture first to avoid picking wrong binary on
     /// multi-arch machines (e.g., x86_64 guest embedded into aarch64 build).
-    fn find_prebuilt_guest(workspace_root: &Path, profile: &str) -> Option<PathBuf> {
+    fn find_prebuilt_musl_binary(
+        workspace_root: &Path,
+        profile: &str,
+        binary_name: &str,
+    ) -> Option<PathBuf> {
         let target_dir = workspace_root.join("target");
 
         // Check matching architecture first, then fall back to others
@@ -997,13 +1001,18 @@ impl EmbeddedManifest {
             let path = target_dir
                 .join(format!("{}-unknown-linux-musl", arch))
                 .join(profile)
-                .join("boxlite-guest");
+                .join(binary_name);
             if path.is_file() {
                 return Some(path);
             }
         }
 
         None
+    }
+
+    /// Find pre-built boxlite-guest binary for the given build profile.
+    fn find_prebuilt_guest(workspace_root: &Path, profile: &str) -> Option<PathBuf> {
+        Self::find_prebuilt_musl_binary(workspace_root, profile, "boxlite-guest")
     }
 
     /// Return architecture list with the build target's arch first.
@@ -1097,80 +1106,95 @@ fn sign_shim_with_entitlements(binary: &Path) {
         }
     }
 }
-/// Computes and embeds the `boxlite-guest` binary hash.
+/// Computes and embeds the hash of a guest-side binary (`boxlite-guest`).
 ///
 /// Search order:
-/// 1. Direct build output: `target/{target-triple}/{profile}/boxlite-guest`
+/// 1. Direct build output: `target/{target-triple}/{profile}/{binary_name}`
 /// 2. `runtime_dir` (OUT_DIR/runtime/ — for prebuilt mode)
 ///
 /// IMPORTANT: The source binary (direct build output) must be checked FIRST because
 /// this runs before embedded manifest generation in main(). The OUT_DIR/runtime/ copy
-/// may be from a previous build and stale when the guest binary was rebuilt.
+/// may be from a previous build and stale when the binary was rebuilt.
 ///
 /// If the binary isn't found, silently skips — runtime will compute the hash as fallback.
 struct GuestBinaryHash<'a> {
+    binary_name: &'a str,
+    env_name: &'a str,
     runtime_dir: &'a Path,
     mode: &'a DepsMode,
     cargo: &'a CargoBuildContext,
 }
 
 impl<'a> GuestBinaryHash<'a> {
-    /// Create a guest binary hash emitter.
-    fn new(runtime_dir: &'a Path, mode: &'a DepsMode, cargo: &'a CargoBuildContext) -> Self {
+    /// Create a guest binary hash emitter for `binary_name`, emitted as `env_name`.
+    fn new(
+        binary_name: &'a str,
+        env_name: &'a str,
+        runtime_dir: &'a Path,
+        mode: &'a DepsMode,
+        cargo: &'a CargoBuildContext,
+    ) -> Self {
         Self {
+            binary_name,
+            env_name,
             runtime_dir,
             mode,
             cargo,
         }
     }
 
-    /// Emit BOXLITE_GUEST_HASH when a guest binary is available.
+    /// Emit `env_name` when the binary is available.
     fn emit(&self) {
-        let Some(guest_path) = self.guest_path() else {
-            println!("cargo:warning=boxlite-guest not found, skipping compile-time hash");
+        let Some(binary_path) = self.binary_path() else {
+            println!(
+                "cargo:warning={} not found, skipping compile-time hash",
+                self.binary_name
+            );
             return;
         };
 
-        match Self::sha256_file(&guest_path) {
+        match Self::sha256_file(&binary_path) {
             Ok(hash) => {
-                println!("cargo:rustc-env=BOXLITE_GUEST_HASH={}", hash);
-                println!("cargo:rerun-if-changed={}", guest_path.display());
+                println!("cargo:rustc-env={}={}", self.env_name, hash);
+                println!("cargo:rerun-if-changed={}", binary_path.display());
                 println!(
-                    "cargo:warning=Embedded guest hash: {}... (from {})",
+                    "cargo:warning=Embedded {} hash: {}... (from {})",
+                    self.binary_name,
                     &hash[..12],
-                    guest_path.display()
+                    binary_path.display()
                 );
             }
             Err(e) => {
                 println!(
-                    "cargo:warning=Failed to hash boxlite-guest at {}: {}",
-                    guest_path.display(),
+                    "cargo:warning=Failed to hash {} at {}: {}",
+                    self.binary_name,
+                    binary_path.display(),
                     e
                 );
             }
         }
     }
 
-    /// Pick the best available guest binary for hashing.
-    fn guest_path(&self) -> Option<PathBuf> {
+    /// Pick the best available binary for hashing.
+    fn binary_path(&self) -> Option<PathBuf> {
         let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
-        self.source_guest_path(&profile)
-            .or_else(|| self.runtime_guest_path())
+        self.source_binary_path(&profile)
+            .or_else(|| self.runtime_binary_path())
     }
 
-    /// Find the workspace-built guest binary in source builds.
-    fn source_guest_path(&self, profile: &str) -> Option<PathBuf> {
+    /// Find the workspace-built binary in source builds.
+    fn source_binary_path(&self, profile: &str) -> Option<PathBuf> {
         if !matches!(self.mode, DepsMode::Source) {
             return None;
         }
 
         let workspace_root = self.cargo.workspace_root()?;
-        EmbeddedManifest::find_prebuilt_guest(workspace_root, profile)
+        EmbeddedManifest::find_prebuilt_musl_binary(workspace_root, profile, self.binary_name)
     }
 
-    /// Find the guest binary already copied into OUT_DIR/runtime.
-    fn runtime_guest_path(&self) -> Option<PathBuf> {
-        let path = self.runtime_dir.join("boxlite-guest");
+    /// Find the binary already copied into OUT_DIR/runtime.
+    fn runtime_binary_path(&self) -> Option<PathBuf> {
+        let path = self.runtime_dir.join(self.binary_name);
         path.is_file().then_some(path)
     }
 
@@ -1288,9 +1312,16 @@ fn main() {
     // Expose the runtime directory to downstream crates (e.g., Python SDK)
     println!("cargo:runtime_dir={}", runtime_dir.display());
 
-    // Compute and embed guest binary hash at compile time (best-effort).
+    // Compute and embed the guest binary hash at compile time (best-effort).
     // Falls back to runtime computation if the binary isn't available yet.
-    GuestBinaryHash::new(&runtime_dir, &mode, &cargo).emit();
+    GuestBinaryHash::new(
+        "boxlite-guest",
+        "BOXLITE_GUEST_HASH",
+        &runtime_dir,
+        &mode,
+        &cargo,
+    )
+    .emit();
 
     // Generate embedded runtime manifest (include_bytes! for self-contained SDKs)
     EmbeddedManifest::new(&runtime_dir).generate(&mode, &cargo);

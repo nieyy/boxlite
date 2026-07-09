@@ -21,6 +21,11 @@ fn get_debugfs_path() -> PathBuf {
     util::find_binary("debugfs").expect("debugfs binary not found")
 }
 
+/// Get the path to the resize2fs binary.
+fn get_resize2fs_path() -> PathBuf {
+    util::find_binary("resize2fs").expect("resize2fs binary not found")
+}
+
 /// Calculate the total size needed for a directory tree on ext4.
 ///
 /// This accounts for:
@@ -362,58 +367,29 @@ fn normalize_inodes_with_debugfs(
         return Ok(());
     }
 
-    // Build debugfs commands to set uid=0 and gid=0 for each file
-    // Using sif (set inode field) command: sif <path> <field> <value>
+    // Build debugfs commands to set uid=0 and gid=0 for each file.
+    // Using sif (set inode field) command: sif <path> <field> <value>.
+    // Paths are quoted so entries containing spaces resolve instead of
+    // silently failing the lookup.
     let mut commands = String::new();
     for path in &paths {
         // sif sets inode field by path
-        commands.push_str(&format!("sif {} uid 0\n", path));
-        commands.push_str(&format!("sif {} gid 0\n", path));
+        commands.push_str(&format!("sif \"{}\" uid 0\n", path));
+        commands.push_str(&format!("sif \"{}\" gid 0\n", path));
     }
     // Restore the original mode on entries we widened for mke2fs. The value is
     // the full st_mode incl. type bits (e.g. a 0000 regular file -> 0100000),
     // matching the `sif … mode 0100555` form used by inject_file_into_ext4.
     for w in widened {
-        commands.push_str(&format!("sif {} mode 0{:o}\n", w.ext4_path, w.mode));
+        commands.push_str(&format!("sif \"{}\" mode 0{:o}\n", w.ext4_path, w.mode));
     }
-
-    let debugfs = get_debugfs_path();
-
-    // Run debugfs with commands via stdin
-    let mut child = Command::new(&debugfs)
-        .args(["-w", "-f", "-"])
-        .arg(image_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| BoxliteError::Storage(format!("Failed to spawn debugfs: {}", e)))?;
-
-    // Write commands to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(commands.as_bytes()).map_err(|e| {
-            BoxliteError::Storage(format!("Failed to write to debugfs stdin: {}", e))
-        })?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|e| BoxliteError::Storage(format!("Failed to wait for debugfs: {}", e)))?;
-
-    let duration = start.elapsed();
 
     // This is the only pass that writes the original 0000 modes back into the
     // image, so a failure must abort the build rather than yield an image with
     // wrong inode metadata.
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(BoxliteError::Storage(format!(
-            "debugfs inode normalization failed (exit {:?}) on {}: {}",
-            output.status.code(),
-            image_path.display(),
-            stderr
-        )));
-    }
+    run_debugfs_commands(image_path, &commands, "inode normalization")?;
+
+    let duration = start.elapsed();
 
     tracing::info!(
         "Normalized {} inodes to 0:0 ({} mode-restored) in {:?}",
@@ -445,6 +421,31 @@ pub fn inject_file_into_ext4(
 
     let commands = build_inject_commands(host_file_str, guest_path);
 
+    run_debugfs_commands(
+        image_path,
+        &commands,
+        &format!("injection of {} -> /{}", host_file.display(), guest_path),
+    )?;
+
+    tracing::debug!(
+        "Injected {} into ext4 image at /{}",
+        host_file.display(),
+        guest_path
+    );
+
+    Ok(())
+}
+
+/// Run a batch of debugfs commands against an ext4 image, failing on any
+/// command error.
+///
+/// debugfs exits 0 even when a command fails (e.g. `write` on a full
+/// filesystem prints `Could not allocate block` and leaves a sparse,
+/// zero-filled file). Command failures are only visible as stderr lines, so
+/// anything on stderr beyond the version banner is treated as fatal — except
+/// `mkdir` on an already-existing directory, which repeated injections into
+/// the same parent rely on.
+fn run_debugfs_commands(image_path: &Path, commands: &str, operation: &str) -> BoxliteResult<()> {
     let debugfs = get_debugfs_path();
 
     let mut child = Command::new(&debugfs)
@@ -455,7 +456,7 @@ pub fn inject_file_into_ext4(
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| {
-            BoxliteError::Storage(format!("Failed to spawn debugfs for injection: {}", e))
+            BoxliteError::Storage(format!("Failed to spawn debugfs for {}: {}", operation, e))
         })?;
 
     if let Some(mut stdin) = child.stdin.take() {
@@ -468,20 +469,107 @@ pub fn inject_file_into_ext4(
         .wait_with_output()
         .map_err(|e| BoxliteError::Storage(format!("Failed to wait for debugfs: {}", e)))?;
 
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(BoxliteError::Storage(format!(
-            "debugfs injection failed for {} -> {}: {}",
-            host_file.display(),
-            guest_path,
+            "debugfs {} failed (exit {:?}) on {}: {}",
+            operation,
+            output.status.code(),
+            image_path.display(),
             stderr
         )));
     }
 
+    let errors: Vec<&str> = stderr
+        .lines()
+        .filter(|line| is_fatal_debugfs_stderr(line))
+        .collect();
+    if !errors.is_empty() {
+        return Err(BoxliteError::Storage(format!(
+            "debugfs {} failed on {}: {}",
+            operation,
+            image_path.display(),
+            errors.join("; ")
+        )));
+    }
+
+    Ok(())
+}
+
+/// Classify a debugfs stderr line: `true` if it signals a failed command.
+///
+/// Expected non-error output is the version banner (`debugfs 1.47.3 (…)`).
+/// `Ext2 directory already exists` is benign: `mkdir` for a parent directory
+/// that an earlier injection already created.
+fn is_fatal_debugfs_stderr(line: &str) -> bool {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with("debugfs ") {
+        return false;
+    }
+    !line.contains("Ext2 directory already exists")
+}
+
+/// Grow an ext4 image file by at least `additional_bytes`.
+///
+/// Extends the backing file, then runs the bundled resize2fs to expand the
+/// filesystem into the new space. Only safe for images not in use (e.g.
+/// freshly copied, never-mounted staging files).
+pub fn grow_ext4(image_path: &Path, additional_bytes: u64) -> BoxliteResult<()> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(image_path)
+        .map_err(|e| {
+            BoxliteError::Storage(format!(
+                "Failed to open ext4 image {} for growing: {}",
+                image_path.display(),
+                e
+            ))
+        })?;
+    let current_bytes = file
+        .metadata()
+        .map_err(|e| {
+            BoxliteError::Storage(format!("Failed to stat {}: {}", image_path.display(), e))
+        })?
+        .len();
+    let target_bytes = (current_bytes + additional_bytes).div_ceil(BLOCK_SIZE) * BLOCK_SIZE;
+    file.set_len(target_bytes).map_err(|e| {
+        BoxliteError::Storage(format!(
+            "Failed to extend {} to {} bytes: {}",
+            image_path.display(),
+            target_bytes,
+            e
+        ))
+    })?;
+    drop(file);
+
+    let resize2fs = get_resize2fs_path();
+    let output = Command::new(&resize2fs)
+        .arg(image_path)
+        .output()
+        .map_err(|e| {
+            BoxliteError::Storage(format!(
+                "Failed to run resize2fs ({}): {}",
+                resize2fs.display(),
+                e
+            ))
+        })?;
+
+    if !output.status.success() {
+        return Err(BoxliteError::Storage(format!(
+            "resize2fs failed (exit {:?}) growing {} to {} bytes: {}",
+            output.status.code(),
+            image_path.display(),
+            target_bytes,
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
     tracing::debug!(
-        "Injected {} into ext4 image at /{}",
-        host_file.display(),
-        guest_path
+        image = %image_path.display(),
+        from_bytes = current_bytes,
+        to_bytes = target_bytes,
+        "Grew ext4 image"
     );
 
     Ok(())
@@ -726,6 +814,140 @@ mod tests {
 
         // Make the tree removable so TempDir can clean up.
         std::fs::set_permissions(&secret_dir, std::fs::Permissions::from_mode(0o700)).ok();
+    }
+
+    /// Make a small empty ext4 image (`blocks` × 4 KiB) for injection tests.
+    fn make_small_ext4(path: &Path, blocks: u64) {
+        let status = Command::new(get_mke2fs_path())
+            .args(["-t", "ext4", "-b", "4096", "-m", "0", "-F", "-q"])
+            .arg(path)
+            .arg(blocks.to_string())
+            .status()
+            .expect("run mke2fs");
+        assert!(status.success(), "mke2fs failed");
+    }
+
+    /// A patterned (non-zero, non-repeating-block) payload so corruption or
+    /// zero-filled sparse blocks can't masquerade as the real content.
+    fn patterned_payload(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251 + 1) as u8).collect()
+    }
+
+    /// Regression: `debugfs write` exits 0 even when the filesystem has no
+    /// free blocks left, silently leaving a sparse zero-filled file. This is
+    /// how a corrupted `boxlite-sessiond` (all zeros → `Exec format error` in
+    /// the guest) got cached into guest rootfs images. The injection must
+    /// fail loudly instead.
+    #[test]
+    fn inject_into_undersized_image_fails_loudly() {
+        if util::find_binary("mke2fs").is_err() || util::find_binary("debugfs").is_err() {
+            eprintln!("skipping: mke2fs/debugfs not found (run `make runtime:debug`)");
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image = dir.path().join("small.ext4");
+        make_small_ext4(&image, 4096); // 16 MiB
+
+        let host_file = dir.path().join("payload.bin");
+        std::fs::write(&host_file, patterned_payload(24 * 1024 * 1024)).expect("write payload");
+
+        let err = inject_file_into_ext4(&image, &host_file, "boxlite/bin/payload")
+            .expect_err("injecting 24 MiB into a 16 MiB image must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("allocate"),
+            "error must surface the debugfs allocation failure, got: {msg}"
+        );
+    }
+
+    /// `grow_ext4` must add enough space that a previously-impossible
+    /// injection succeeds, and the injected content must round-trip
+    /// byte-for-byte (dumped back out of the image, not from the test body).
+    #[test]
+    fn grow_ext4_then_inject_round_trips_content() {
+        if util::find_binary("mke2fs").is_err()
+            || util::find_binary("debugfs").is_err()
+            || util::find_binary("resize2fs").is_err()
+        {
+            eprintln!("skipping: e2fsprogs tools not found (run `make runtime:debug`)");
+            return;
+        }
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image = dir.path().join("small.ext4");
+        make_small_ext4(&image, 4096); // 16 MiB
+
+        let payload = patterned_payload(24 * 1024 * 1024);
+        let host_file = dir.path().join("payload.bin");
+        std::fs::write(&host_file, &payload).expect("write payload");
+
+        // Mirrors the guest rootfs build: payload size + 2% + 8 MiB.
+        let headroom = payload.len() as u64 + payload.len() as u64 / 50 + 8 * 1024 * 1024;
+        grow_ext4(&image, headroom).expect("grow_ext4 must succeed");
+
+        inject_file_into_ext4(&image, &host_file, "boxlite/bin/payload")
+            .expect("injection must succeed after growing");
+
+        let dumped = dir.path().join("dumped.bin");
+        let status = Command::new(get_debugfs_path())
+            .arg("-R")
+            .arg(format!("dump /boxlite/bin/payload {}", dumped.display()))
+            .arg(&image)
+            .status()
+            .expect("run debugfs dump");
+        assert!(status.success(), "debugfs dump failed");
+        assert_eq!(
+            std::fs::read(&dumped).expect("read dumped"),
+            payload,
+            "injected content must round-trip byte-for-byte"
+        );
+    }
+
+    /// Source trees may contain paths with spaces; the inode-normalization
+    /// pass quotes them for debugfs. With unquoted paths the `sif` lookup
+    /// fails — silently before the loud-stderr fix, aborting the build after
+    /// it — so the image build must succeed AND record uid 0.
+    #[test]
+    fn create_ext4_normalizes_paths_with_spaces() {
+        if util::find_binary("mke2fs").is_err() || util::find_binary("debugfs").is_err() {
+            eprintln!("skipping: mke2fs/debugfs not found (run `make runtime:debug`)");
+            return;
+        }
+        if unsafe { libc::geteuid() } == 0 {
+            eprintln!("skipping: normalization pass is skipped as root");
+            return;
+        }
+
+        let src_root = tempfile::tempdir().expect("source tempdir");
+        let src = src_root.path().join("rootfs");
+        std::fs::create_dir_all(src.join("app dir")).expect("mkdir");
+        std::fs::write(src.join("app dir/data file.txt"), b"spacey").expect("write");
+
+        let out_root = tempfile::tempdir().expect("output tempdir");
+        let out = out_root.path().join("rootfs.ext4");
+        let _disk = create_ext4_from_dir(&src, &out)
+            .expect("ext4 build must handle paths with spaces in the sif pass");
+
+        let stat = Command::new(get_debugfs_path())
+            .args(["-R", "stat \"/app dir/data file.txt\""])
+            .arg(&out)
+            .output()
+            .expect("run debugfs stat");
+        assert!(
+            stat.status.success(),
+            "debugfs stat failed: {}",
+            String::from_utf8_lossy(&stat.stderr)
+        );
+        let stat_out = String::from_utf8_lossy(&stat.stdout);
+        let tokens: Vec<&str> = stat_out.split_whitespace().collect();
+        let user = tokens
+            .iter()
+            .position(|t| *t == "User:")
+            .and_then(|i| tokens.get(i + 1))
+            .copied()
+            .unwrap_or_else(|| panic!("no User field in debugfs stat:\n{stat_out}"));
+        assert_eq!(user, "0", "uid must be normalized to 0:\n{stat_out}");
     }
 
     #[test]

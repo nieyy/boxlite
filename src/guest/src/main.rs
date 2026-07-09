@@ -16,6 +16,8 @@ mod network;
 #[cfg(target_os = "linux")]
 mod overlayfs;
 #[cfg(target_os = "linux")]
+mod panic_domain;
+#[cfg(target_os = "linux")]
 mod service;
 #[cfg(target_os = "linux")]
 mod storage;
@@ -75,9 +77,17 @@ fn main() -> BoxliteResult<()> {
     // Early diagnostic - visible even if tracing fails
     eprintln!("[guest] T+0ms: agent starting");
 
-    // Set panic hook to ensure we see panics
+    // Set panic hook to ensure we see panics. A panic on an SSH-runtime
+    // worker thread (see service::ssh) is confined to one SSH connection —
+    // tokio's own per-task catch_unwind already contains it — so only panics
+    // elsewhere force-exit the process. See panic_domain for how a thread is
+    // marked as SSH-owned.
     std::panic::set_hook(Box::new(|panic_info| {
         eprintln!("[PANIC] Guest agent panicked: {}", panic_info);
+        if panic_domain::is_current_thread_ssh() {
+            eprintln!("[PANIC] confined to SSH connection handling; guest process continues");
+            return;
+        }
         std::process::exit(1);
     }));
 

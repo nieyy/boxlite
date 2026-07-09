@@ -214,7 +214,8 @@ fn validate_reusable_guest_rootfs_disk(guest_rootfs_disk_path: &Path) -> Boxlite
 ///
 /// Uses the two-stage pipeline:
 /// 1. `ImageDiskManager`: pure image layers → ext4 disk (cached by image digest)
-/// 2. `GuestRootfsManager`: image disk + boxlite-guest → versioned rootfs (cached by digest+guest hash)
+/// 2. `GuestRootfsManager`: image disk + boxlite-guest → versioned rootfs
+///    (cached by digest + guest binary hash)
 async fn prepare_guest_rootfs(
     guest_rootfs_mgr: &GuestRootfsManager,
     image_disk_mgr: &ImageDiskManager,

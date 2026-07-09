@@ -114,7 +114,9 @@ applied per runner.
 
 ## Public hostnames
 
-Five public DNS names, four different fronting layers:
+Five public DNS names, four different fronting layers, always-on. A sixth,
+`ssh-russh.<STACK_DOMAIN>`, exists only on non-production stages — see
+[SshGatewayRussh](#sshgatewayrussh-staging-only) below.
 
 | Hostname                       | Fronted by             | Purpose                                                           |
 |--------------------------------|------------------------|-------------------------------------------------------------------|
@@ -142,6 +144,19 @@ noisy to copy/paste. `ssh.<STACK_DOMAIN>` is a Cloudflare CNAME (DNS-only,
 gray cloud — Cloudflare can't proxy raw TCP) pointing at the NLB. The CNAME
 is created from `sst.config.ts` via `cloudflareDns.createAlias("SshGateway", …)`
 so it tracks the NLB DNS name automatically across recreations.
+
+**SshGatewayRussh (staging only).** `src/ssh-gateway-russh` is the new Rust
+(`russh`) SSH gateway, deployed side-by-side with the Go `SshGateway` above for
+staging validation — not a replacement yet, and not wired into any production
+traffic path. Guarded by `if (!isProd)` in `sst.config.ts`, so it never
+deploys under the `production` stage. It shares the same Hosted API credential
+and Runner bearer token as the Go gateway (`SSH_GATEWAY_API_KEY` /
+`DEFAULT_RUNNER_API_KEY`), reads `BOXLITE_HOSTED_API_URL`/`BOXLITE_HOSTED_API_TOKEN`/
+`BOXLITE_RUNNER_SERVICE_TOKEN` instead of the Go gateway's `API_URL`/`API_KEY`
+env names, and does **not** persist its host key across restarts yet (clients
+will see a changed host-key fingerprint warning on every task recreation) —
+fix that (persistent volume or `sst.Secret`) before routing any real traffic
+to it. Test with `ssh -p 2222 <token>@ssh-russh.<STACK_DOMAIN>`.
 
 **SDK base URL.** Long-lived SDK sessions (`exec`, `attach`) should target
 `https://api.<STACK_DOMAIN>` directly, not `https://<STACK_DOMAIN>/api`. The
@@ -230,6 +245,7 @@ For Auth0 specifically:
 | **Api**             | REST API + WebSocket `/attach`       | `https://api.<STACK_DOMAIN>` (public ALB)    |
 | **Proxy**           | `<port>-<id>.proxy.<domain>` previews | `https://*.proxy.<STACK_DOMAIN>` (public ALB) |
 | **SshGateway**      | `ssh <token>@ssh.<domain>:2222`      | `ssh.<STACK_DOMAIN>:2222` (public NLB, raw TCP) |
+| **SshGatewayRussh** | staging validation only, see below   | `ssh-russh.<STACK_DOMAIN>:2222` (public NLB, raw TCP) — non-prod stages only |
 | **Jaeger**          | Trace viewer (no auth)               | internal ALB (set `JAEGER_PUBLIC=true` to expose) |
 | **OtelCollector**   | OTLP ingest + health                 | internal ALB (in-VPC emitters only)          |
 | **PgAdmin**         | Postgres admin UI                    | internal ALB (set `PGADMIN_PUBLIC=true` to expose) |

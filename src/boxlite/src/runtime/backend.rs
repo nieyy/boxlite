@@ -5,6 +5,9 @@ use std::path::Path;
 use async_trait::async_trait;
 
 use crate::litebox::copy::CopyOptions;
+use crate::litebox::session::{
+    BoxSessionError, BoxSessionErrorCode, BoxSessionPhase, OpenSessionError, SessionReadiness,
+};
 use crate::litebox::snapshot_mgr::SnapshotInfo;
 use crate::litebox::{BoxCommand, Execution, LiteBox};
 use crate::metrics::{BoxMetrics, RuntimeMetrics};
@@ -93,6 +96,32 @@ pub(crate) trait BoxBackend: Send + Sync {
     }
 
     async fn metrics(&self) -> BoxliteResult<BoxMetrics>;
+
+    /// Live readiness probe for a guest session service (only `"ssh"`).
+    ///
+    /// Default impl returns `Unsupported` — only backends with a local
+    /// transport to the guest (VM-backed `BoxImpl`) can probe.
+    async fn session_ready(&self, _service: &str) -> BoxliteResult<SessionReadiness> {
+        Err(BoxliteError::Unsupported(
+            "this backend does not support guest session probes".into(),
+        ))
+    }
+
+    /// Open a raw byte stream to a guest session service (only `"ssh"`).
+    /// The caller performs the SSH handshake on the returned stream.
+    ///
+    /// Default impl fails — a raw Unix stream only exists for local backends.
+    async fn open_session_stream(
+        &self,
+        _service: &str,
+    ) -> Result<tokio::net::UnixStream, OpenSessionError> {
+        Err(OpenSessionError::Session(BoxSessionError::new(
+            BoxSessionErrorCode::Internal,
+            BoxSessionPhase::SessionOpen,
+            self.id().as_str(),
+            "this backend does not support raw session streams",
+        )))
+    }
 
     async fn stop(&self) -> BoxliteResult<()>;
 

@@ -25,6 +25,10 @@ type SshAccessValidationDto struct {
 	Valid bool `json:"valid"`
 	// ID of the box this SSH access is for
 	BoxId string `json:"boxId"`
+	// Guest unix user the SSH session runs as
+	UnixUser *string `json:"unixUser,omitempty"`
+	// Non-sensitive identifier of the SSH access token, for audit correlation
+	TokenId *string `json:"tokenId,omitempty"`
 	AdditionalProperties map[string]interface{}
 }
 
@@ -97,6 +101,70 @@ func (o *SshAccessValidationDto) SetBoxId(v string) {
 	o.BoxId = v
 }
 
+// GetUnixUser returns the UnixUser field value if set, zero value otherwise.
+func (o *SshAccessValidationDto) GetUnixUser() string {
+	if o == nil || IsNil(o.UnixUser) {
+		var ret string
+		return ret
+	}
+	return *o.UnixUser
+}
+
+// GetUnixUserOk returns a tuple with the UnixUser field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *SshAccessValidationDto) GetUnixUserOk() (*string, bool) {
+	if o == nil || IsNil(o.UnixUser) {
+		return nil, false
+	}
+	return o.UnixUser, true
+}
+
+// HasUnixUser returns a boolean if a field has been set.
+func (o *SshAccessValidationDto) HasUnixUser() bool {
+	if o != nil && !IsNil(o.UnixUser) {
+		return true
+	}
+
+	return false
+}
+
+// SetUnixUser gets a reference to the given string and assigns it to the UnixUser field.
+func (o *SshAccessValidationDto) SetUnixUser(v string) {
+	o.UnixUser = &v
+}
+
+// GetTokenId returns the TokenId field value if set, zero value otherwise.
+func (o *SshAccessValidationDto) GetTokenId() string {
+	if o == nil || IsNil(o.TokenId) {
+		var ret string
+		return ret
+	}
+	return *o.TokenId
+}
+
+// GetTokenIdOk returns a tuple with the TokenId field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+func (o *SshAccessValidationDto) GetTokenIdOk() (*string, bool) {
+	if o == nil || IsNil(o.TokenId) {
+		return nil, false
+	}
+	return o.TokenId, true
+}
+
+// HasTokenId returns a boolean if a field has been set.
+func (o *SshAccessValidationDto) HasTokenId() bool {
+	if o != nil && !IsNil(o.TokenId) {
+		return true
+	}
+
+	return false
+}
+
+// SetTokenId gets a reference to the given string and assigns it to the TokenId field.
+func (o *SshAccessValidationDto) SetTokenId(v string) {
+	o.TokenId = &v
+}
+
 func (o SshAccessValidationDto) MarshalJSON() ([]byte, error) {
 	toSerialize,err := o.ToMap()
 	if err != nil {
@@ -109,6 +177,12 @@ func (o SshAccessValidationDto) ToMap() (map[string]interface{}, error) {
 	toSerialize := map[string]interface{}{}
 	toSerialize["valid"] = o.Valid
 	toSerialize["boxId"] = o.BoxId
+	if !IsNil(o.UnixUser) {
+		toSerialize["unixUser"] = o.UnixUser
+	}
+	if !IsNil(o.TokenId) {
+		toSerialize["tokenId"] = o.TokenId
+	}
 
 	for key, value := range o.AdditionalProperties {
 		toSerialize[key] = value
@@ -155,6 +229,8 @@ func (o *SshAccessValidationDto) UnmarshalJSON(data []byte) (err error) {
 	if err = json.Unmarshal(data, &additionalProperties); err == nil {
 		delete(additionalProperties, "valid")
 		delete(additionalProperties, "boxId")
+		delete(additionalProperties, "unixUser")
+		delete(additionalProperties, "tokenId")
 		o.AdditionalProperties = additionalProperties
 	}
 

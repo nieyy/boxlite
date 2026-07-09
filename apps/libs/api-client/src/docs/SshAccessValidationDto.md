@@ -7,6 +7,8 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **valid** | **boolean** | Whether the SSH access token is valid | [default to undefined]
 **boxId** | **string** | ID of the box this SSH access is for | [default to undefined]
+**unixUser** | **string** | Guest unix user the SSH session runs as | [optional] [default to undefined]
+**tokenId** | **string** | Non-sensitive identifier of the SSH access token, for audit correlation | [optional] [default to undefined]
 
 ## Example
 
@@ -16,6 +18,8 @@ import { SshAccessValidationDto } from './api';
 const instance: SshAccessValidationDto = {
     valid,
     boxId,
+    unixUser,
+    tokenId,
 };
 ```
 

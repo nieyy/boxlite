@@ -313,6 +313,31 @@ typedef struct BoxliteImageRegistry {
 // Runtime shutdown completion.
 typedef void (*CRuntimeShutdownCb)(CBoxliteError*, void*);
 
+// A typed guest session failure, or the absence of one.
+//
+// When `present` is false every pointer is NULL and the struct carries no
+// allocation. When `present` is true, `code`/`phase`/`message` are owned C
+// strings the caller must release with `boxlite_session_error_free`.
+//
+// `code` is a stable machine string (`BOX_STOPPED`, `RUNTIME_HANDLE_MISSING`,
+// `RUNTIME_HANDLE_STALE`, `GUEST_ENDPOINT_MISSING`, `GUEST_ENDPOINT_STALE`,
+// `GUEST_SERVICE_NOT_READY`, `VSOCK_CONNECT_FAILED`, `GUEST_SERVICE_REJECTED`,
+// `PERMISSION_DENIED`, `TIMEOUT`, `INTERNAL`); `phase` is one of
+// `runtime_lookup`, `endpoint_resolve`, `transport_connect`,
+// `readiness_probe`, `session_open`.
+typedef struct CBoxSessionError {
+  // Stable machine-readable failure class (NULL when absent).
+  char *code;
+  // Phase of the session operation that failed (NULL when absent).
+  char *phase;
+  // User-safe description; never contains transport details (NULL when absent).
+  char *message;
+  // Whether retrying the operation may succeed.
+  bool retryable;
+  // True when this struct describes a session error; false = no error.
+  bool present;
+} CBoxSessionError;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -721,6 +746,44 @@ void boxlite_runtime_free(CBoxliteRuntime *runtime);
 //
 // Returns the number of dispatched events, or `-1` on error.
 int boxlite_runtime_drain(CBoxliteRuntime *runtime, int timeout_ms, CBoxliteError *out_error);
+
+// Release the strings owned by a `CBoxSessionError` and reset it to the
+// absent state. Safe to call on NULL, on an absent value, and repeatedly.
+void boxlite_session_error_free(struct CBoxSessionError *error);
+
+// Live readiness probe for a guest session service (only `"ssh"`).
+//
+// Blocks for a bounded interval (internal connect/banner timeouts of a few
+// seconds). On return code `Ok`, `*out_ready` is set; when not ready,
+// `*out_reason` (if non-NULL) carries the typed cause — not ready is NOT an
+// error. Runtime-level failures (e.g. `InvalidArgument` for an unknown
+// service) go through `out_error` as usual.
+enum BoxliteErrorCode boxlite_box_session_ready(CBoxHandle *handle,
+                                                const char *service,
+                                                bool *out_ready,
+                                                struct CBoxSessionError *out_reason,
+                                                CBoxliteError *out_error);
+
+// Open a raw byte stream to a guest session service (only `"ssh"`).
+//
+// On return code `Ok`, `*out_fd` is a connected Unix-socket file descriptor:
+// - Ownership transfers to the caller (close with `close(2)`).
+// - The fd is in NON-BLOCKING mode; callers doing blocking I/O must clear
+//   `O_NONBLOCK` or use readiness polling.
+// - No bytes have been consumed: the first read yields the SSH server
+//   identification banner; the caller performs the SSH handshake.
+//
+// An unsupported `service` is reported the same way `boxlite_box_session_ready`
+// reports it: `InvalidArgument` via `out_error`, `*out_session_err` stays
+// absent. Any other failure returns a coarse non-`Ok` code (`Stopped` for
+// `BOX_STOPPED`, `Internal` for `INTERNAL`, `Network` otherwise — see
+// `CBoxSessionError` for the precise class), fills `*out_session_err`
+// (if non-NULL) with the typed cause, and fills `out_error` as usual.
+enum BoxliteErrorCode boxlite_box_open_session_stream(CBoxHandle *handle,
+                                                      const char *service,
+                                                      int *out_fd,
+                                                      struct CBoxSessionError *out_session_err,
+                                                      CBoxliteError *out_error);
 
 void boxlite_free_string(char *s);
 

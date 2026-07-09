@@ -330,6 +330,86 @@ impl BoxImpl {
         ))
     }
 
+    // ========================================================================
+    // GUEST SESSIONS (SSH over the per-box vsock bridge)
+    // ========================================================================
+
+    /// Live readiness probe for a guest session service (only `"ssh"`).
+    ///
+    /// Never starts the box and never opens an SSH handshake: it dials the
+    /// per-box session socket, reads the identification banner, and closes.
+    /// Each call probes live — readiness is never cached.
+    pub(crate) async fn session_ready(
+        &self,
+        service: &str,
+    ) -> BoxliteResult<super::session::SessionReadiness> {
+        use super::session;
+
+        session::ensure_supported_service(service)?;
+        let socket_path = match self.resolve_session_endpoint() {
+            Ok(path) => path,
+            Err(reason) => return Ok(session::SessionReadiness::not_ready(reason)),
+        };
+        Ok(session::probe_ssh_endpoint(self.id().as_str(), &socket_path).await)
+    }
+
+    /// Open a raw byte stream to a guest session service (only `"ssh"`).
+    ///
+    /// Returns the connected stream untouched — no banner is read; the caller
+    /// performs the SSH handshake. An unsupported `service` is reported the
+    /// same way [`Self::session_ready`] reports it — `InvalidArgument` — not
+    /// folded into the session-open failure taxonomy.
+    pub(crate) async fn open_session_stream(
+        &self,
+        service: &str,
+    ) -> Result<tokio::net::UnixStream, super::session::OpenSessionError> {
+        use super::session::{self, BoxSessionPhase};
+
+        session::ensure_supported_service(service)?;
+        let socket_path = self.resolve_session_endpoint()?;
+        Ok(session::connect_session_endpoint(
+            self.id().as_str(),
+            &socket_path,
+            BoxSessionPhase::SessionOpen,
+        )
+        .await?)
+    }
+
+    /// Phases `runtime_lookup` + `endpoint_resolve`: the box must be running
+    /// and the binding symlink in place. Returns the ssh.sock binding path.
+    ///
+    /// Deliberately does NOT call `live_state()` — a probe must never
+    /// lazily boot the box.
+    fn resolve_session_endpoint(
+        &self,
+    ) -> Result<std::path::PathBuf, super::session::BoxSessionError> {
+        use super::session::{BoxSessionError, BoxSessionErrorCode, BoxSessionPhase};
+
+        let box_id = self.id().as_str();
+        if self.shutdown_token.is_cancelled() || !self.state.read().status.is_running() {
+            return Err(BoxSessionError::new(
+                BoxSessionErrorCode::BoxStopped,
+                BoxSessionPhase::RuntimeLookup,
+                box_id,
+                "box is not running",
+            ));
+        }
+
+        // Re-ensure the binding symlink (self-healing against /tmp cleaners,
+        // same as the guest-connect path).
+        let sockets = self.layout.sockets();
+        sockets.ensure().map_err(|e| {
+            BoxSessionError::new(
+                BoxSessionErrorCode::Internal,
+                BoxSessionPhase::EndpointResolve,
+                box_id,
+                "failed to prepare the session endpoint",
+            )
+            .with_cause(e)
+        })?;
+        Ok(sockets.ssh_sock())
+    }
+
     pub(crate) async fn stop(&self) -> BoxliteResult<()> {
         let t0 = Instant::now();
 
@@ -1120,6 +1200,20 @@ impl crate::runtime::backend::BoxBackend for BoxImpl {
 
     async fn metrics(&self) -> BoxliteResult<BoxMetrics> {
         self.metrics().await
+    }
+
+    async fn session_ready(
+        &self,
+        service: &str,
+    ) -> BoxliteResult<crate::litebox::session::SessionReadiness> {
+        self.session_ready(service).await
+    }
+
+    async fn open_session_stream(
+        &self,
+        service: &str,
+    ) -> Result<tokio::net::UnixStream, crate::litebox::session::OpenSessionError> {
+        self.open_session_stream(service).await
     }
 
     async fn stop(&self) -> BoxliteResult<()> {

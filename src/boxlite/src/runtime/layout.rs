@@ -406,6 +406,11 @@ impl BoxFilesystemLayout {
         self.sockets().net_backend_sock()
     }
 
+    /// Guest SSH session socket binding path (see [`BoxSockets::ssh_sock`]).
+    pub fn ssh_socket_path(&self) -> PathBuf {
+        self.sockets().ssh_sock()
+    }
+
     // ========================================================================
     // MOUNTS AND SHARED
     // ========================================================================

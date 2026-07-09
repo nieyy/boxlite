@@ -1,0 +1,38 @@
+[package]
+name = "boxlite-ssh-gateway"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+description = "BoxLite public SSH gateway - terminates public SSH and bridges to Runner session streams"
+edition = "2021"
+
+[[bin]]
+name = "boxlite-ssh-gateway"
+path = "src/main.rs"
+
+[dependencies]
+boxlite-session-frame = { path = "../session-frame" }
+# Same pin/features as boxlite-guest's SSH service: `ring` backend
+# cross-compiles where the default `aws-lc-rs` does not, and we need neither
+# rsa nor compression.
+russh = { version = "0.62", default-features = false, features = ["ring"] }
+# Same rand generation russh itself uses for `PrivateKey::random`.
+rand = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "io-util", "net", "time", "signal", "fs"] }
+# HTTP stack: hand-rolled HTTP/1.1 over hyper's connection API. Chosen over
+# reqwest because the Runner leg needs the raw upgraded byte stream
+# (`hyper::upgrade::on`) and hyper 1.x + hyper-util are already in the
+# workspace lock (boxlite depends on hyper-util), so no new dependency trees.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+
+[dev-dependencies]
+tempfile = "3"

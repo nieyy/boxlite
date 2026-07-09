@@ -79,11 +79,11 @@ impl GuestServer {
         // Wrap self in Arc for sharing across services
         let server = Arc::new(self);
 
-        let server_builder = Server::builder()
-            .add_service(boxlite_shared::ContainerServer::from_arc(server.clone()))
-            .add_service(boxlite_shared::GuestServer::from_arc(server.clone()))
-            .add_service(boxlite_shared::ExecutionServer::from_arc(server.clone()))
-            .add_service(boxlite_shared::FilesServer::from_arc(server.clone()));
+        // SSH session listener. Failures are logged, never fatal — the main
+        // listener below always comes up regardless.
+        super::ssh::spawn(server.clone());
+
+        let server_builder = grpc_router(server.clone());
 
         match transport {
             BoxTransport::Vsock { port } => {
@@ -104,7 +104,7 @@ impl GuestServer {
                     port
                 );
 
-                let incoming = listener.incoming();
+                let incoming = trusted_vsock_incoming(listener);
 
                 tokio::spawn(async move {
                     if let Err(e) = notify_host_ready(notify_uri).await {
@@ -197,6 +197,47 @@ impl GuestServer {
         }
 
         Ok(())
+    }
+}
+
+/// Build a gRPC router exposing all four guest services.
+///
+/// Used for both the main (host-facing) listener and the in-process SSH
+/// session service (`service::ssh`) so both serve an identical surface.
+pub(super) fn grpc_router(server: Arc<GuestServer>) -> tonic::transport::server::Router {
+    Server::builder()
+        .add_service(boxlite_shared::ContainerServer::from_arc(server.clone()))
+        .add_service(boxlite_shared::GuestServer::from_arc(server.clone()))
+        .add_service(boxlite_shared::ExecutionServer::from_arc(server.clone()))
+        .add_service(boxlite_shared::FilesServer::from_arc(server))
+}
+
+/// Wraps a vsock listener's raw accept loop, dropping connections from any
+/// CID other than the hypervisor host before they ever reach the gRPC
+/// service. This control plane (container/exec/files) has no per-request
+/// auth of its own — same untrusted-CID class the SSH listener guards
+/// against (see `service::ssh::is_trusted_peer`), just on a more powerful
+/// surface. Ends the stream on the first accept error, matching
+/// `VsockListener::incoming()`'s own behavior.
+fn trusted_vsock_incoming(
+    listener: tokio_vsock::VsockListener,
+) -> impl futures::Stream<Item = std::io::Result<tokio_vsock::VsockStream>> {
+    async_stream::stream! {
+        loop {
+            match listener.accept().await {
+                Ok((stream, peer)) => {
+                    if !super::ssh::is_trusted_peer(peer.cid()) {
+                        warn!(peer = %peer, "rejecting vsock connection from non-host CID");
+                        continue;
+                    }
+                    yield Ok(stream);
+                }
+                Err(e) => {
+                    yield Err(e);
+                    break;
+                }
+            }
+        }
     }
 }
 

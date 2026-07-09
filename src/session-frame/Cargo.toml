@@ -1,0 +1,12 @@
+[package]
+name = "boxlite-session-frame"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Codec for the BoxLite session-frame protocol (Gateway <-> Runner SSH framing)"
+repository = "https://github.com/boxlite-ai/boxlite"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

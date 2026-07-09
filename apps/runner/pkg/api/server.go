@@ -158,6 +158,14 @@ func (a *ApiServer) Start(ctx context.Context) error {
 		boxliteApi.PUT("/:boxId/files", controllers.BoxliteFileUpload)
 		boxliteApi.GET("/:boxId/files", controllers.BoxliteFileDownload)
 		boxliteApi.GET("/:boxId/metrics", controllers.BoxliteMetrics)
+		boxliteApi.GET("/:boxId/ssh-status", controllers.BoxliteSshStatus)
+	}
+
+	// Internal service-to-service API (Gateway -> Runner). Same bearer-token
+	// auth as the rest of the protected surface.
+	internalApi := protected.Group("/internal")
+	{
+		internalApi.POST("/ssh/sessions/:boxId/stream", controllers.InternalSshSessionStream)
 	}
 
 	a.httpServer = &http.Server{

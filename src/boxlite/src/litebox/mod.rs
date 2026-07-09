@@ -12,6 +12,7 @@ mod exec;
 mod init;
 pub(crate) mod local_snapshot;
 mod manager;
+pub mod session;
 mod snapshot;
 pub(crate) mod snapshot_mgr;
 mod state;
@@ -20,6 +21,9 @@ pub use copy::CopyOptions;
 pub(crate) use crash_report::CrashReport;
 pub use exec::{BoxCommand, ExecResult, ExecStderr, ExecStdin, ExecStdout, Execution, ExecutionId};
 pub(crate) use manager::BoxManager;
+pub use session::{
+    BoxSessionError, BoxSessionErrorCode, BoxSessionPhase, OpenSessionError, SessionReadiness,
+};
 pub use snapshot::SnapshotHandle;
 pub use state::{BoxState, BoxStatus, HealthState, HealthStatus};
 
@@ -110,6 +114,28 @@ impl LiteBox {
 
     pub async fn metrics(&self) -> BoxliteResult<BoxMetrics> {
         self.box_backend.metrics().await
+    }
+
+    /// Live readiness probe for a guest session service. Only `"ssh"` is
+    /// supported; anything else is `BoxliteError::InvalidArgument`.
+    ///
+    /// Each call probes live (connect + banner read, then close) — readiness
+    /// is never cached. Not ready is NOT an error: inspect
+    /// [`SessionReadiness::reason`] for the typed cause.
+    pub async fn session_ready(&self, service: &str) -> BoxliteResult<SessionReadiness> {
+        self.box_backend.session_ready(service).await
+    }
+
+    /// Open a raw byte stream to a guest session service. Only `"ssh"` is
+    /// supported — an unsupported `service` is reported as
+    /// [`OpenSessionError::Argument`], the same class [`Self::session_ready`]
+    /// reports for the identical bad input. The stream is returned untouched
+    /// — no banner is consumed; the caller performs the SSH handshake.
+    pub async fn open_session_stream(
+        &self,
+        service: &str,
+    ) -> Result<tokio::net::UnixStream, OpenSessionError> {
+        self.box_backend.open_session_stream(service).await
     }
 
     pub async fn stop(&self) -> BoxliteResult<()> {

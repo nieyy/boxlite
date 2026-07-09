@@ -1,9 +1,9 @@
 """L2 native-process supervision + stack-level commands.
 
-Ports the former `scripts/stack-*.sh` into Python: brings the four native host
-processes (API, runner, proxy, dashboard) up/down/status/restart, builds the Go
-binaries, tails logs, resets DB state, seeds init data, and rebuilds stuck L1
-boxes. Daemons are spawned DETACHED (`start_new_session=True`) so they outlive
+Ports the former `scripts/stack-*.sh` into Python: brings the five native host
+processes (API, runner, proxy, dashboard, ssh-gateway) up/down/status/restart,
+builds the Go/Rust binaries, tails logs, resets DB state, seeds init data, and
+rebuilds stuck L1 boxes. Daemons are spawned DETACHED (`start_new_session=True`) so they outlive
 this process; stopped via SIGTERM→SIGKILL on the process **group**, which reaps
 the `nx serve`/go grandchildren cleanly (the bash needed a pkill-by-name sweep
 for this; we keep that only as a belt-and-suspenders fallback).
@@ -36,8 +36,11 @@ PORT_API = int(os.environ.get("BOXLITE_LOCAL_API_PORT", "3001"))  # override if 
 PORT_RUNNER = 3003
 PORT_PROXY = 4000
 PORT_DASHBOARD = 3000
-ALL_COMPONENTS = ("api", "runner", "proxy", "dashboard")  # start order: api first
+PORT_SSH_GATEWAY = 2222
+ALL_COMPONENTS = ("api", "runner", "proxy", "dashboard", "ssh-gateway")  # start order: api first
 _RUNNER_TOKEN = "local-shared-runner-token-aaaa1111"
+# Matches api.env's SSH_GATEWAY_API_KEY (dormant placeholder there; live here).
+_SSH_GATEWAY_TOKEN = "local-ssh-gateway-key-not-used-cccc"
 
 
 # ── colored logging (TTY only) ─────────────────────────────────────────────
@@ -99,6 +102,10 @@ class _Paths:
     @property
     def proxy_bin(self) -> Path:
         return self.bin / "boxlite-proxy"
+
+    @property
+    def ssh_gateway_bin(self) -> Path:
+        return self.bin / "boxlite-ssh-gateway"
 
     @property
     def runner_home(self) -> Path:
@@ -196,7 +203,7 @@ def _parse_dotenv(path: Path) -> dict[str, str]:
     return env
 
 
-# ── L2 component table (the four native host processes) ────────────────────
+# ── L2 component table (the five native host processes) ────────────────────
 @dataclass(frozen=True)
 class _Component:
     name: str
@@ -271,6 +278,23 @@ def _components(p: _Paths) -> dict[str, _Component]:
             "dashboard", PORT_DASHBOARD, "http", f"http://localhost:{PORT_DASHBOARD}", 120,
             ["corepack", "yarn", "nx", "serve", "dashboard"], apps, {"VITE_API_URL": "/api"},
             "nx.*serve.*dashboard",
+        ),
+        "ssh-gateway": _Component(
+            "ssh-gateway", PORT_SSH_GATEWAY, "tcp", "", 30,
+            [str(p.ssh_gateway_bin)], None,
+            {
+                "BOXLITE_SSH_LISTEN_ADDR": f"0.0.0.0:{PORT_SSH_GATEWAY}",
+                "BOXLITE_SSH_HOST_KEY_PATH": str(p.runner_home / "ssh-gateway-host-key"),
+                # Matches api.env's SSH_GATEWAY_API_KEY — the same bearer token
+                # SshGatewayGuard checks on the hosted-API side.
+                "BOXLITE_HOSTED_API_URL": f"http://localhost:{PORT_API}/api",
+                "BOXLITE_HOSTED_API_TOKEN": _SSH_GATEWAY_TOKEN,
+                # The runner has no separate internal service token — its
+                # AuthMiddleware checks this same value on every endpoint.
+                "BOXLITE_RUNNER_SERVICE_TOKEN": _RUNNER_TOKEN,
+                "BOXLITE_SSH_TARGET": "russh-vsock",
+            },
+            "boxlite-ssh-gateway$",
         ),
     }
 
@@ -429,14 +453,28 @@ def _go_build(p: _Paths, comp: str) -> None:
                    cwd=str(p.apps / comp), env={**os.environ, "GOTOOLCHAIN": "auto"}, check=True)
 
 
+def _cargo_build_ssh_gateway(p: _Paths, repo_root: Path) -> None:
+    """Rebuild the native boxlite-ssh-gateway binary from the workspace."""
+    out = p.ssh_gateway_bin
+    p.bin.mkdir(parents=True, exist_ok=True)
+    log(f"cargo build boxlite-ssh-gateway → {out}")
+    subprocess.run(
+        ["cargo", "build", "--release", "-p", "boxlite-ssh-gateway"],
+        cwd=str(repo_root), check=True,
+    )
+    built = repo_root / "target" / "release" / "boxlite-ssh-gateway"
+    shutil.copy2(built, out)
+
+
 def build(cfg: InfraConfig) -> int:
-    """Build both native binaries (used by `up` when they're missing)."""
+    """Build all native binaries (used by `up` when they're missing)."""
     p = _paths(cfg)
     if not (p.apps / "node_modules").is_dir():
         log("yarn install (node_modules missing)")
         subprocess.run(["corepack", "yarn", "install"], cwd=str(p.apps), check=True)
     _go_build(p, "runner")
     _go_build(p, "proxy")
+    _cargo_build_ssh_gateway(p, p.repo_root)
     ok("binaries ready")
     return 0
 
@@ -524,7 +562,7 @@ def up(cfg: InfraConfig, components: list[str] | None = None) -> int:
             stop_component(p, name)
 
     # 3. binaries present? (auto-build the missing ones)
-    if not p.runner_bin.exists() or not p.proxy_bin.exists():
+    if not p.runner_bin.exists() or not p.proxy_bin.exists() or not p.ssh_gateway_bin.exists():
         log("native binaries missing — building")
         build(cfg)
 
@@ -560,7 +598,7 @@ def up(cfg: InfraConfig, components: list[str] | None = None) -> int:
 
 def down(cfg: InfraConfig, components: list[str] | None = None, *, include_l1: bool = False) -> int:
     p = _paths(cfg)
-    comps = components or ["dashboard", "proxy", "runner", "api"]  # reverse of start order
+    comps = components or ["dashboard", "ssh-gateway", "proxy", "runner", "api"]  # reverse of start order
     for name in comps:
         stop_component(p, name)
     if include_l1:
@@ -585,18 +623,21 @@ def status(cfg: InfraConfig) -> int:
 
     print()
     print(f"{_BOLD}L2 — native processes{_RESET}")
-    print(f"  {'COMP':<10} {'PID':<8} {'PORT':<8} STATE")
-    ports = {"api": PORT_API, "runner": PORT_RUNNER, "proxy": PORT_PROXY, "dashboard": PORT_DASHBOARD}
+    print(f"  {'COMP':<12} {'PID':<8} {'PORT':<8} STATE")
+    ports = {
+        "api": PORT_API, "runner": PORT_RUNNER, "proxy": PORT_PROXY,
+        "dashboard": PORT_DASHBOARD, "ssh-gateway": PORT_SSH_GATEWAY,
+    }
     for comp in ALL_COMPONENTS:
         pid = _component_pid(p, comp)
         port = ports[comp]
         if pid is None:
-            print(f"  {comp:<10} {'-':<8} {port:<8} {_DIM}down{_RESET}")
+            print(f"  {comp:<12} {'-':<8} {port:<8} {_DIM}down{_RESET}")
             exit_code = 1
         elif _port_listening(port):
-            print(f"  {comp:<10} {pid:<8} {port:<8} {_GREEN}up{_RESET}")
+            print(f"  {comp:<12} {pid:<8} {port:<8} {_GREEN}up{_RESET}")
         else:
-            print(f"  {comp:<10} {pid:<8} {port:<8} {_YELLOW}alive but not listening{_RESET}")
+            print(f"  {comp:<12} {pid:<8} {port:<8} {_YELLOW}alive but not listening{_RESET}")
             exit_code = 1
 
     print()
@@ -636,8 +677,9 @@ def logs(cfg: InfraConfig, comp: str | None = None) -> int:
 def restart(cfg: InfraConfig, names: list[str]) -> int:
     """Restart L2 process(es) and/or recreate L1 box(es), by name.
 
-    L2 components (api/runner/proxy/dashboard) are stopped + restarted (runner/
-    proxy rebuild their Go binary first). L1 box names (dex/registry/...) are
+    L2 components (api/runner/proxy/dashboard/ssh-gateway) are stopped + restarted
+    (runner/proxy rebuild their Go binary, ssh-gateway its Rust binary, first).
+    L1 box names (dex/registry/...) are
     destroyed + recreated — the surgical fix for one wedged box (e.g. dex after
     the host sleeps and its clock drifts). The host data volume survives.
     """
@@ -655,6 +697,8 @@ def restart(cfg: InfraConfig, names: list[str]) -> int:
         stop_component(p, name)
         if name in ("runner", "proxy"):  # native Go binaries — no watch mode, rebuild
             _go_build(p, name)
+        elif name == "ssh-gateway":  # native Rust binary — no watch mode, rebuild
+            _cargo_build_ssh_gateway(p, p.repo_root)
         healthy &= start_component(p, table[name])
 
     if l1:  # recreate L1 boxes inside ONE event loop (the SDK runtime is loop-bound)
@@ -672,7 +716,7 @@ def restart(cfg: InfraConfig, names: list[str]) -> int:
 
 def _stop_l2_and_wipe_runner(p: _Paths) -> None:
     log("stopping L2 native processes...")
-    for name in ["dashboard", "proxy", "runner", "api"]:
+    for name in ["dashboard", "ssh-gateway", "proxy", "runner", "api"]:
         stop_component(p, name)
     log(f"wiping runner home: {p.runner_home}")
     for sub in ("db", "boxes", "images", "rootfs", "logs"):

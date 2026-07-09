@@ -6,9 +6,9 @@ BoxLite. One Python orchestrator (`compose`) drives both layers:
 - **L1 — 11 BoxLite microVM boxes**: postgres, redis, minio (+ a one-shot bucket
   init), registry, dex, jaeger, pgadmin, registry-ui, otel-collector, caddy —
   via the BoxLite SDK (`orchestrator.py` / `services.py`).
-- **L2 — 4 native macOS processes**: API (NestJS, `:3001`), Runner (Go, `:3003`),
-  Proxy (Go, `:4000`), Dashboard (Vite, `:3000`) — via `subprocess` supervision
-  (`native.py`).
+- **L2 — 5 native macOS processes**: API (NestJS, `:3001`), Runner (Go, `:3003`),
+  Proxy (Go, `:4000`), Dashboard (Vite, `:3000`), SSH gateway (Rust, `:2222`) —
+  via `subprocess` supervision (`native.py`).
 
 All generated state lives under one gitignored dir, `<repo>/.apps-local/`
 (`data/` volumes, `boxlite/` L1 SDK home, `boxlite-runner/` L3 home, `bin/`
@@ -59,6 +59,7 @@ source of truth — `python -m compose --help`):
 | otel (OTLP HTTP) | `http://127.0.0.1:24318/v1/traces` | — |
 | caddy (unified entry) | `http://127.0.0.1:28080/` | reverse-proxies all of the above |
 | Dashboard / API | `http://localhost:3000` / `:3001/api` | login via Dex |
+| SSH gateway | `ssh -p 2222 <token>@localhost` | token from `POST /box/{id}/ssh-access` |
 
 Inside a box, reach the host via `host.boxlite.internal:<port>` (gvproxy DNS —
 only resolvable in a box). `InfraConfig` in `compose/config.py` is the source of
