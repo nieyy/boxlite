@@ -5,6 +5,10 @@
 package proxy
 
 import (
+	"bufio"
+	"context"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -13,6 +17,68 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+type bufferedConn struct {
+	net.Conn
+	reader *bufio.Reader
+}
+
+// NewBufferedConn preserves bytes already read from conn into reader.
+func NewBufferedConn(conn net.Conn, reader *bufio.Reader) net.Conn {
+	return &bufferedConn{Conn: conn, reader: reader}
+}
+
+func (c *bufferedConn) Read(payload []byte) (int, error) {
+	return c.reader.Read(payload)
+}
+
+func (c *bufferedConn) CloseWrite() error {
+	if conn, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return conn.CloseWrite()
+	}
+	return errors.ErrUnsupported
+}
+
+// ProxyBidirectionalStream relays both directions until both streams close.
+func ProxyBidirectionalStream(ctx context.Context, left, right net.Conn) error {
+	copyStream := func(dst, src net.Conn) error {
+		_, err := io.Copy(dst, src)
+		if closeWriter, ok := dst.(interface{ CloseWrite() error }); ok {
+			_ = closeWriter.CloseWrite()
+		}
+		return err
+	}
+
+	results := make(chan error, 2)
+	go func() { results <- copyStream(left, right) }()
+	go func() { results <- copyStream(right, left) }()
+
+	select {
+	case <-ctx.Done():
+		_ = left.Close()
+		_ = right.Close()
+		<-results
+		<-results
+		return ctx.Err()
+	case err := <-results:
+		if err != nil {
+			_ = left.Close()
+			_ = right.Close()
+			<-results
+			return err
+		}
+	}
+
+	select {
+	case <-ctx.Done():
+		_ = left.Close()
+		_ = right.Close()
+		<-results
+		return ctx.Err()
+	case err := <-results:
+		return err
+	}
+}
 
 var proxyTransport = &http.Transport{
 	MaxIdleConns:        100,

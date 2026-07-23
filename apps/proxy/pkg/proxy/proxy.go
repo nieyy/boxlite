@@ -174,8 +174,9 @@ func StartProxy(ctx context.Context, config *config.Config) error {
 	})
 
 	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", config.ProxyPort),
-		Handler: router,
+		Addr:              fmt.Sprintf(":%d", config.ProxyPort),
+		Handler:           connectAwareHandler(http.HandlerFunc(proxy.handleTunnelConnect), router, shutdownWg),
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	listener, err := net.Listen("tcp", httpServer.Addr)
@@ -230,4 +231,16 @@ func StartProxy(ctx context.Context, config *config.Config) error {
 
 		return <-errChan
 	}
+}
+
+func connectAwareHandler(connectHandler, next http.Handler, shutdownWg *sync.WaitGroup) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodConnect {
+			shutdownWg.Add(1)
+			defer shutdownWg.Done()
+			connectHandler.ServeHTTP(writer, request)
+			return
+		}
+		next.ServeHTTP(writer, request)
+	})
 }

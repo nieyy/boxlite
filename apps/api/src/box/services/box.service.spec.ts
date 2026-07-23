@@ -151,3 +151,102 @@ describe('BoxService.ensureStartedForProxy', () => {
     expect(warn).toHaveBeenCalled()
   })
 })
+
+function makeNetworkTunnelService() {
+  const configService = {
+    getOrThrow: jest.fn((key: string) => {
+      if (key === 'proxy.domain') return 'proxy.example.test'
+      if (key === 'proxy.protocol') return 'https'
+      throw new Error(`unexpected config key ${key}`)
+    }),
+  } as any
+  const regionService = { findOne: jest.fn().mockResolvedValue(null) } as any
+  const noop = {} as any
+  const service = new BoxService(
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    configService,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    noop,
+    regionService,
+    noop,
+    noop,
+  )
+  jest.spyOn(service, 'findOneByIdOrName').mockResolvedValue({
+    id: 'MixedCaseBox',
+    region: 'region-1',
+  } as any)
+  return service
+}
+
+describe('BoxService network tunnel URLs', () => {
+  it('creates a case-safe endpoint for an SDK tunnel', async () => {
+    const service = makeNetworkTunnelService()
+
+    const result = await service.getNetworkTunnelUrl('MixedCaseBox', 'org-1', 3000)
+
+    expect(result).toBe('https://3000-d-4d6978656443617365426f78.proxy.example.test')
+  })
+})
+
+describe('BoxService public defaults', () => {
+  function makeCreateService() {
+    const boxRepository = { insert: jest.fn(async (box: any) => box) } as any
+    const service = Object.create(BoxService.prototype) as BoxService
+    Object.assign(service as any, {
+      getValidatedOrDefaultRegion: jest.fn().mockResolvedValue({ id: 'region-1' }),
+      getValidatedOrDefaultClass: jest.fn().mockReturnValue('small'),
+      organizationService: { assertOrganizationIsNotSuspended: jest.fn() },
+      redis: { exists: jest.fn().mockResolvedValue(1) },
+      runnerService: { getRandomAvailableRunner: jest.fn().mockResolvedValue({ id: 'runner-1' }) },
+      boxRepository,
+      eventEmitter: { emitAsync: jest.fn().mockResolvedValue(undefined) },
+      toBoxDto: jest.fn((box) => box),
+    })
+    return { service, boxRepository }
+  }
+
+  it.each([
+    [undefined, true],
+    [false, false],
+  ])('defaults a fresh box to public=%s', async (requestedPublic, expectedPublic) => {
+    const { service, boxRepository } = makeCreateService()
+
+    await service.create({ name: 'fresh-box', public: requestedPublic } as any, { id: 'org-1' } as any)
+
+    expect(boxRepository.insert).toHaveBeenCalledWith(expect.objectContaining({ public: expectedPublic }))
+  })
+
+  it.each([
+    [undefined, true],
+    [false, false],
+  ])('defaults an assigned warm-pool box to public=%s', async (requestedPublic, expectedPublic) => {
+    const warmPoolBox = { id: 'warm-box', runnerId: 'runner-1', name: 'warm-box' } as any
+    const update = jest.fn().mockResolvedValue(warmPoolBox)
+    const service = Object.create(BoxService.prototype) as BoxService
+    Object.assign(service as any, {
+      boxRepository: { update },
+      boxLookupCacheInvalidationService: { invalidateOrgId: jest.fn() },
+      eventEmitter: { emit: jest.fn() },
+      toBoxDto: jest.fn((box) => box),
+    })
+
+    await (service as any).assignWarmPoolBox(
+      warmPoolBox,
+      { name: 'assigned-box', public: requestedPublic },
+      { id: 'org-1' },
+    )
+
+    expect(update).toHaveBeenCalledWith(
+      'warm-box',
+      expect.objectContaining({ updateData: expect.objectContaining({ public: expectedPublic }) }),
+    )
+  })
+})

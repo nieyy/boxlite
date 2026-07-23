@@ -678,20 +678,12 @@ export default $config({
           aliases: [`*.${proxyDomain}`],
           dns: cloudflareDns,
         },
-        rules: [{ listen: '443/https', forward: `${PORTS.PROXY}/http` }],
-        health: { [`${PORTS.PROXY}/http`]: httpHealth('/health') },
-      },
-      // Same reasoning as the Api LB: bump idle to 1h so dashboard iframe
-      // terminals (https://22222-<sbx>.proxy.<stack>/) survive idle pauses
-      // until the runner-side keepalive in handleWebSocketTerminal lands.
-      transform: {
-        loadBalancer: (lbArgs) => {
-          lbArgs.idleTimeout = 3600
-        },
+        rules: [{ listen: '443/tls', forward: `${PORTS.PROXY}/tcp` }],
+        health: { [`${PORTS.PROXY}/tcp`]: {} },
       },
       environment: {
         PROXY_PORT: String(PORTS.PROXY),
-        PROXY_PROTOCOL: envOr('PROXY_PROTOCOL', 'http'),
+        PROXY_PROTOCOL: envOr('PROXY_PROTOCOL', 'https'),
         PROXY_API_KEY: envOr('PROXY_API_KEY', proxyApiKey.result),
         // api-client-go appends paths like "/config" directly → include /api suffix
         BOXLITE_API_URL: $interpolate`${stripTrailingSlash(api.url)}/api`,

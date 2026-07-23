@@ -17,6 +17,11 @@ import {
   Logger,
   NotFoundException,
   ForbiddenException,
+  HttpCode,
+  HttpStatus,
+  ParseIntPipe,
+  Post,
+  Query,
 } from '@nestjs/common'
 import { ApiTags, ApiBearerAuth, ApiExcludeController } from '@nestjs/swagger'
 import { createProxyMiddleware, fixRequestBody, Options } from 'http-proxy-middleware'
@@ -191,6 +196,17 @@ export class BoxliteProxyController {
       next,
       OBSERVATION_ONLY,
     )
+  }
+
+  @Post(':boxId/network/tunnel')
+  @HttpCode(HttpStatus.OK)
+  async proxyNetworkTunnel(
+    @AuthContext() authContext: OrganizationAuthContext,
+    @Param('boxId') boxId: string,
+    @Query('port', ParseIntPipe) port: number,
+  ) {
+    const uri = await this.boxService.getNetworkTunnelUrl(boxId, authContext.organizationId, port)
+    return { uri }
   }
 
   private async proxyToRunner(
